@@ -35,6 +35,8 @@ with an equivalent open-source solver
 #define MAXADAPTLOOPS 3
 #define SKIPCONTINATION true
 
+#include "SRlinux.h"
+#include "SRpoundDefines.h"
 #include "SRcoord.h"
 #include "SRmaterial.h"
 #include "SRbasis.h"
@@ -43,22 +45,32 @@ with an equivalent open-source solver
 #include "SRmath.h"
 #include "SRstring.h"
 #include "SRfile.h"
-#include "SRsolver.h"
 #include "SRerrorCheck.h"
 #include "SRinput.h"
+#include "SRsolver.h"
 #include "SRpostProcess.h"
 #include "SRmodel.h"
 #include "SRmklUtil.h"
-#include "SRpoundDefines.h"
 
 class SRPassData
 {
 public:
-	SRPassData(){ maxp = 0; neq = 0; err = 0.0; maxsvm = 0.0; };
+	SRPassData()
+	{
+		maxp = 0;
+		neq = 0;
+		err = 0.0;
+		maxsvm = 0.0;
+		maxsp1 = 0.0;
+		maxCustom = 0.0;
+	};
+
 	int maxp;
 	int neq;
 	double err;
 	double maxsvm;
+	double maxsp1;
+	double maxCustom;
 };
 
 class SRanalysis
@@ -68,8 +80,6 @@ class SRanalysis
 public:
 
 	SRanalysis();
-
-	static void TimeStamp();
 
 	void Initialize();
 	void CleanUp(bool partial = false);
@@ -85,7 +95,6 @@ public:
 	void PStats();
 	void CreateModel();
 	void CalculateElementStiffnesses(bool anyLcsEnfd);
-	bool CalculateElementStiffnessesOmp();
 	void NumberGlobalFunctions();
 	bool Adapt(int pIteration, bool checkErrorOnly = false);
 	void Run();
@@ -128,13 +137,10 @@ public:
 	void SetStressMaxComp(double *stressComp);
 	double GetStrainMax(){ return strainMax; };
 	void SetStrainMax(double e){ strainMax = e; };
+	void UpdateCustomCriterion(double stress[]);
+
 	
-	void zeroStressMax()
-	{
-		stressMax = 0.0;
-		for (int i = 0; i < 6; i++)
-			stressMaxComp[i] = 0.0;
-	};
+	void zeroStressMax();
 	void PrintStresses(double *stress);
 	void SetDetectSacr(bool sacr){ detectSacrificialElements = sacr; };
 	void setAdaptLoopMax(int nits);
@@ -242,6 +248,7 @@ private:
 	double stressMaxP2;
 	double maxsp1;
 	double minsp2;
+	double maxCustom;
 	bool checkForHotSpotatMax;
 	bool anyHotSpotElFound;
 	int adaptLoopMax;
@@ -250,7 +257,6 @@ private:
 	int maxPorderFinalAdapt;
 	int maxPorderLowStress;
 	double ErrorTolerance;
-
-
+	bool echoElements;
 };
 

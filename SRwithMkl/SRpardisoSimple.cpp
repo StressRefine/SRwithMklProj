@@ -32,10 +32,10 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
+#include "SRlinux.h"
 #include "SRanalysis.h"
 #include "SRmodel.h"
 #include "SRinput.h"
@@ -46,6 +46,7 @@ with an equivalent open-source solver
 static char THIS_FILE[] = __FILE__;
 #endif
 
+#ifndef NOSOLVER
 extern SRmodel model;
 extern SRanalysis analysis;
 
@@ -291,8 +292,6 @@ void SRpardiso::solveFFG(SRFaceForceGroup *ffg)
 
 	double MbytesNeeded = ((double)memNeeded) / 1024.0;
 
-	double availmem = SRmachDep::availMemCheck();
-
 	LOGPRINT("Pardiso sparse equation solving ");
 
 	solvphase = 22; //factor the matrix;
@@ -519,4 +518,5 @@ void SRpardiso::fillColindFFG(SRFaceForceGroup *ffg, int neq)
 		}
 	}
 }
+#endif
 

@@ -34,6 +34,8 @@ with an equivalent open-source solver
 #if !defined(SRSOLVER_INCLUDED)
 #define SRSOLVER_INCLUDED
 
+
+
 #include "SRmklUtil.h"
 #include "SRutil.h"
 
@@ -42,6 +44,7 @@ class SRforce;
 
 class SRpardiso
 {
+#ifndef NOSOLVER
 	friend class SRsolver;
 public:
 	SRpardiso();
@@ -81,6 +84,7 @@ private:
 	SRmklIntVector elmaxrow;
 	SRmklIntVector elminrow;
 	double maxInt32;
+#endif
 };
 
 class SRsolver

@@ -31,10 +31,10 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
+#include "SRlinux.h"
 #include "SRanalysis.h"
 #include "SRinput.h"
 
@@ -52,17 +52,20 @@ static bool solverecho=true;
 
 void SRsolver::Cleanup()
 {
+#ifndef NOSOLVER
 	parDisoSolver.clear();
+#endif
 }
 
 void SRsolver::DoSolution()
 {
 	//bookkeep, assmble, and solve for the global stiffness matrix
 	//version using the Intel pardiso solver:
-
+#ifndef NOSOLVER
 	int neq = analysis.GetNumEquations();
 	LOGPRINT("Solution Setup: bookkeep, assemble, preanalyze stiffness matrix\n");
 	parDisoSolver.bookkeep();
 	parDisoSolver.assemble();
 	parDisoSolver.solve();
+#endif
 }

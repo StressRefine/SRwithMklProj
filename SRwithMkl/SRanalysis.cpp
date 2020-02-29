@@ -31,11 +31,12 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include <stdlib.h>
 #include "SRanalysis.h"
 #include "SRinput.h"
+#ifndef NOSOLVER
 #include "mkl.h"
+#endif
 
 extern SRmodel model;
 
@@ -45,15 +46,6 @@ SRanalysis::SRanalysis()
 {
 	Initialize();
 };
-
-void SRanalysis::TimeStamp()
-{
-	//put a time stamp in model output file
-	SRstring line;
-	SRmachDep::GetTime(line);
-	LOGPRINT(line.str);
-	LOGPRINTRET;
-}
 
 void SRanalysis::Initialize()
 {
@@ -75,6 +67,7 @@ void SRanalysis::Initialize()
 	prevStressMax = 0.0;
 	maxsp1 = 0.0;
 	minsp2 = BIG;
+	maxCustom = 0.0;
 	nodeidAtMaxStressPos = -1;
 	maxStressElid = -1;
 	needSoftSprings = false;
@@ -95,12 +88,16 @@ void SRanalysis::Initialize()
 	maxPorderLowStress = 6;
 	maxPinModel = 2;
 	adaptLoopMax = MAXADAPTLOOPS;
+	echoElements = false;
+#ifdef NOSOLVER
+	echoElements = true;
+#endif
 
 	errorChecker.Initialize();
 }
 
 
-static char *stressComp[6] = { "xx", "yy", "zz", "xy", "xz", "yz"};
+static const char *stressComp[6] = { "xx", "yy", "zz", "xy", "xz", "yz"};
 
 void SRanalysis::Run()
 {
@@ -132,11 +129,10 @@ void SRanalysis::Run()
 		//report.txt is a summary that gets displayed by the UI. This output is done by "REPPRINT"
 		//filname.log, where filename is the name of the input file, is a detailed log. It will be displayed by the ui if anything has gone wrong
 		//This is done by "LOGPRINT"
-		//filename.out is more detailed results output. It is done by "OUTPRINT"
+		//filename.out is more detailed results output. It is done by "LOGPRINT"
 		//SCREENPRINT is to the command window which you'll see if you run this standalone. If run through the UI that window is suppressed and the SCREENPRINT
 		//output is redirected to the status bar.
 
-	double sInitial, sElapsed;
 	double errForOutput = 0.0;
 	if (pOrderUniform)
 		passData.Allocate(8);
@@ -148,12 +144,7 @@ void SRanalysis::Run()
 	SRvec3 dmax;
 	int nodeUidAtMaxDisp = 0;
 
-	double availmem = SRmachDep::availMemCheck();
-	MaxElementMem = 0.5*availmem;
-	int mbytes = (int)(availmem / 1.049E6);
-	OUTPRINT("available memory for run: %d MBytes\n", mbytes);
-
-	int its, neq = 0;
+	int its;
 
 	bool anyLcsEnfd = PreProcessPenaltyConstraints();
 
@@ -177,8 +168,8 @@ void SRanalysis::Run()
 	{
 		adaptIt = its;
 
-		OUTPRINT("\nAdaptive Solution. Iteration: %d\n", its + 1);
-		OUTPRINT("Maximum Polynomial Order in Model: %d\n", maxPinModel);
+		LOGPRINT("\nAdaptive Solution. Iteration: %d\n", its + 1);
+		LOGPRINT("Maximum Polynomial Order in Model: %d\n", maxPinModel);
 		model.setVolume(0.0);
 
 		NumberGlobalFunctions();
@@ -200,6 +191,12 @@ void SRanalysis::Run()
 		SCREENPRINT("Adaptive Iteration: %d. Calculating element stiffnesses\n", its + 1);
 		CalculateElementStiffnesses(anyLcsEnfd);
 
+#ifdef NOSOLVER
+		SCREENPRINT("Cannot proceed further without solver\n");
+		LOGPRINT("Cannot proceed further without solver\n");
+		exit(0);
+#endif
+
 		if (needSoftSprings)
 			AddSoftSprings();
 
@@ -210,13 +207,13 @@ void SRanalysis::Run()
 		//solution:
 		SCREENPRINT("Adaptive Iteration: %d. Solving Equations\n", its + 1);
 		LOGPRINT("Solving %d Equations\n", numEquations);
-		OUTPRINT("\nNumber of Equations: %d\n", numEquations);
+		LOGPRINT("\nNumber of Equations: %d\n", numEquations);
 
 		solver.DoSolution();
 
 		NodalMaxDisp(nodeUidAtMaxDisp, dmax);
-		OUTPRINT("\nMaximum nodal displacement (at node %d)\n", nodeUidAtMaxDisp);
-		OUTPRINT("ux: %lg\nuy: %lg\nuz: %lg\n\n", dmax.d[0], dmax.d[1], dmax.d[2]);
+		LOGPRINT("\nMaximum nodal displacement (at node %d)\n", nodeUidAtMaxDisp);
+		LOGPRINT("ux: %lg\nuy: %lg\nuz: %lg\n\n", dmax.d[0], dmax.d[1], dmax.d[2]);
 
 		int pbeforeAdapt = maxPinModel;
 
@@ -228,14 +225,16 @@ void SRanalysis::Run()
 			adapted = Adapt(its, CHECKERRORONLY);//final pass. CheckErroronly is true
 
 		errForOutput = CalculateMaxErrorForOutput();
-		OUTPRINT("Estimated Error in Stress Calculation: %6.2lg percent", errForOutput);
-		OUTPRINT("Maximum von Mises Stress in Model: %lg\n", stressUnitConversion*stressMax);
+		LOGPRINT("Estimated Error in Stress Calculation: %6.2lg percent", errForOutput);
+		LOGPRINT("Maximum von Mises Stress in Model: %lg\n", stressUnitConversion*stressMax);
 
 		SRPassData& pd = passData.Get(its);
 		pd.err = errForOutput;
 		pd.maxp = pbeforeAdapt;
 		pd.neq = numEquations;
 		pd.maxsvm = stressMax;
+		pd.maxsp1 = maxsp1;
+		pd.maxCustom = maxCustom;
 
 		prevStressMax = stressMax;
 
@@ -258,7 +257,7 @@ void SRanalysis::Run()
 	CleanUp(true);//partial is true
 
 	model.allocateSmallElementData(numEquations);
-	OUTPRINT("\nAdaptive loop complete");
+	LOGPRINT("\nAdaptive loop complete");
 	LOGPRINT("\nAdaptive loop complete");
 	LOGPRINT("Post Processing");
 	post.PostProcess();
@@ -268,42 +267,50 @@ void SRanalysis::Run()
 	model.freeNodeFaces();
 
 	SRstring line;
-	REPPRINT("Results of StressRefine full model solution");
+	REPPRINT("Results of StressRefine full model solution\n");
 
 	if (useUnits)
 	{
-		REPPRINT("Units of Stress: %s", stressUnitstr.str);
-		REPPRINT("Units of Length: %s", lengthUnitstr.str);
+		REPPRINT("Units of Stress: %s\n", stressUnitstr.getStr());
+		REPPRINT("Units of Length: %s\n", lengthUnitstr.getStr());
 	}
 	else
 	{
-		REPPRINT("\nUnits of Stress are the same as units for Young's Modulus in Nastran MAT1");
+		REPPRINT("\nUnits of Stress are the same as units for Young's Modulus in Nastran MAT1\n");
 	}
 
 	if (detectSacrificialElements)
 	{
 		if (SingStressCheck())
-			REPPRINT("Singular");
+			REPPRINT("Singular\n");
 	}
 	if (errorChecker.getSmallMaxStressDetected())
-		REPPRINT("SmallStressDetected");
+		REPPRINT("SmallStressDetected\n");
 	if (flattenedWarningNeeded)
-		REPPRINT("Flattened High StressElement");
+		REPPRINT("Flattened High StressElement\n");
 	if ((errForOutput) > 10.5)//10.5 instead of 10 is for roundoff
-		REPPRINT("HighError: %lg", errForOutput);
+		REPPRINT("HighError: %lg\n", errForOutput);
 	if (slopekinkWarnNeeded)
-		REPPRINT("SlopeKinkAtMax");
+		REPPRINT("SlopeKinkAtMax\n");
 
-	REPPRINTNORET("MaxVMIts");
+	REPPRINT("MaxVMIts");
 	for (int i = 0; i < lastIt; i++)
-		REPPRINTNORET(",%lg", passData.Get(i).maxsvm);
+		REPPRINT(",%lg", passData.Get(i).maxsvm);
+	REPPRINT("\n");
+	REPPRINT("MaxSP1Its");
+	for (int i = 0; i < lastIt; i++)
+		REPPRINT(",%lg", passData.Get(i).maxsp1);
+	REPPRINT("\n");
+	REPPRINT("MaxCustomIts");
+	for (int i = 0; i < lastIt; i++)
+		REPPRINT(",%lg", passData.Get(i).maxCustom);
 	REPPRINT("\n");
 
-	REPPRINT("Maximum von Mises Stress in Model: %12.3lg  ", stressUnitConversion*stressMax);
-	REPPRINT("Maximum Principal Stress in Model: %12.3lg  ", stressUnitConversion*maxsp1);
-	REPPRINT("Minimum Principal Stress in Model: %12.3lg  ", stressUnitConversion*minsp2);
+	REPPRINT("Maximum von Mises Stress in Model: %12.3lg\n  ", stressUnitConversion*stressMax);
+	REPPRINT("Maximum Principal Stress in Model: %12.\n  ", stressUnitConversion*maxsp1);
+	REPPRINT("Minimum Principal Stress in Model: %12.3lg\n  ", stressUnitConversion*minsp2);
 
-	REPPRINT("Estimated Error in Stress Calculation: %6.2lg percent", errForOutput);
+	REPPRINT("Estimated Error in Stress Calculation: %6.2lg percent\n", errForOutput);
 	double maxPercentYielded = 0.0;
 	int nmat = model.GetNumMaterials();
 	int numactivemat = 0;
@@ -320,9 +327,9 @@ void SRanalysis::Run()
 			SRmaterial* mat = model.GetMaterial(i);
 			if (mat->isActive())
 			{
-				REPPRINT("For Elements with Material: %s", mat->GetName());
+				REPPRINT("For Elements with Material: %s\n", mat->GetName());
 				double vm = mat->GetMaxSvm();
-				REPPRINT("    Max von Mises Stress: %12.3lg", stressUnitConversion*vm);
+				REPPRINT("    Max von Mises Stress: %12.3lg\n", stressUnitConversion*vm);
 				if (mat->isAllowableAssigned())
 				{
 					double percentYielded;
@@ -333,52 +340,52 @@ void SRanalysis::Run()
 						fs = allow / vm;
 					if (fs < 1.0)
 					{
-						REPPRINT("    Allowable Stress: %lg Factor of Safety: %5.2lg -- Yielded", stressUnitConversion*allow, fs);
+						REPPRINT("    Allowable Stress: %lg Factor of Safety: %5.2lg -- Yielded\n", stressUnitConversion*allow, fs);
 						if (percentYielded > 1.0)
 							percentYielded = 0.9999;
-						REPPRINT("    Percentage of Material volume yielded: %5.2lf", (percentYielded*100.0));
+						REPPRINT("    Percentage of Material volume yielded: %5.2lf\n", (percentYielded*100.0));
 						if (percentYielded > maxPercentYielded)
 							maxPercentYielded = percentYielded;
 					}
 					else
-						REPPRINT("    Allowable Stress: %lg Factor of Safety: %lg", stressUnitConversion*allow, fs);
+						REPPRINT("    Allowable Stress: %lg Factor of Safety: %lg\n", stressUnitConversion*allow, fs);
 				}
 			}
 		}
 	}
 
-	REPPRINT("Maximum displacement in Model: %lg  ", lengthUnitConversion*dmax.Magnitude());
+	REPPRINT("Maximum displacement in Model: %lg\n  ", lengthUnitConversion*dmax.Magnitude());
 	REPPRINT("\nMaximum Polynomial Order in Model: %d\n", maxPinModel);
 	REPPRINT("Number of in Equations in Model: %d\n\n", numEquations);
 	if (nits != 1)
 	{
-		REPPRINT("Adaptive Analysis     Max Polynomial Order    Estimated Stress Error    Max Von Mises Stress");
-		REPPRINT("Iteration                                                               in Model");
+		REPPRINT("Adaptive Analysis     Max Polynomial Order    Estimated Stress Error    Max Von Mises Stress\n");
+		REPPRINT("Iteration                                                               in Model\n");
 
 		for (int its = 0; its < lastIt; its++)
 		{
 			SRPassData& pd = passData.Get(its);
-			REPPRINT("         %d                      %d                  %-6.2lg                    %12.3lg", its + 1, pd.maxp, pd.err, stressUnitConversion*pd.maxsvm);
+			REPPRINT("         %d                      %d                  %-6.2lg                    %12.3lg\n", its + 1, pd.maxp, pd.err, stressUnitConversion*pd.maxsvm);
 		}
 	}
 
-	model.reportFile.Close();
+	model.repFile.Close();
 
-	OUTPRINT("\n\nFinal result for Model: %s\n", fileNameTail.str);
-	OUTPRINT("Total Volume of Model : %lg\n", model.getVolume());
+	LOGPRINT("\n\nFinal result for Model: %s\n", fileNameTail.getStr());
+	LOGPRINT("Total Volume of Model : %lg\n", model.getVolume());
 	PStats();
-	OUTPRINT("Estimated Error in Stress Calculation: %6.2lg percent", errForOutput);
-	OUTPRINT("Maximum Polynomial Order in Model: %d\n", maxPinModel);
-	OUTPRINT("Maximum nodal displacement (at node %d)\n", nodeUidAtMaxDisp);
-	OUTPRINT("ux: %lg\nuy: %lg\nuz: %lg\n", dmax.d[0], dmax.d[1], dmax.d[2]);
-	OUTPRINT("Maximum von Mises Stress in Model: %lg  at position %lg %lg %lg\n", stressMax, maxStressPos.d[0], maxStressPos.d[1], maxStressPos.d[2]);
+	LOGPRINT("Estimated Error in Stress Calculation: %6.2lg percent\n", errForOutput);
+	LOGPRINT("Maximum Polynomial Order in Model: %d\n", maxPinModel);
+	LOGPRINT("Maximum nodal displacement (at node %d)\n", nodeUidAtMaxDisp);
+	LOGPRINT("ux: %lg\nuy: %lg\nuz: %lg\n", dmax.d[0], dmax.d[1], dmax.d[2]);
+	LOGPRINT("Maximum von Mises Stress in Model: %lg  at position %lg %lg %lg\n", stressMax, maxStressPos.d[0], maxStressPos.d[1], maxStressPos.d[2]);
 	for (int i = 0; i < 6; i++)
-		OUTPRINT("Maximum Stress Component %s in Model: %lg\n", stressComp[i], stressMaxComp[i]);
+		LOGPRINT("Maximum Stress Component %s in Model: %lg\n", stressComp[i], stressMaxComp[i]);
 
 	if (model.getMaxFlattened() > TINY)
 	{
-		OUTPRINT("max element flattening for bad mapping: %lg", model.getMaxFlattened());
-		OUTPRINT("element: %d", model.getMaxFlattenedElUid());
+		LOGPRINT("max element flattening for bad mapping: %lg\n", model.getMaxFlattened());
+		LOGPRINT("element: %d\n", model.getMaxFlattenedElUid());
 	}
 
 	CleanUp();
@@ -429,9 +436,9 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 
 	if (!checkErrorOnly)
 	{
-		OUTPRINTRET;
-		OUTPRINT("Maximum von Mises Stress in Model: %lg\n", stressMax);
-		OUTPRINT("Maximum Stress Components in Model\n");
+		LOGPRINT("\n");
+		LOGPRINT("Maximum von Mises Stress in Model: %lg\n", stressMax);
+		LOGPRINT("Maximum Stress Components in Model\n");
 		PrintStresses(stressMaxComp);
 	}
 
@@ -775,8 +782,21 @@ void SRanalysis::NumberGlobalFunctions()
 
 void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 {
-	//calculate elemental stiffness matrix for all elements in model and store on disk
-	//unless elements fit in memory
+	//calculate elemental stiffness matrix for all elements in model
+	//all elements must fit in memory
+
+	SRfile elf;
+	if (echoElements)
+	{
+		SRstring line;
+		line = outdir;
+		line += slashStr;
+		line += "elemStiff.txt";
+		elf.filename = line;
+		elf.Open(SRoutputMode);
+		elf.PrintLine("Element Stiffnesses");
+	}
+
 
 	//scratch space needed by elements:
 	model.allocateElementData();
@@ -789,6 +809,8 @@ void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 	int progout = 10;
 	for (int i = 0; i < n; i++)
 	{
+		if (echoElements)
+			elf.PrintLine("element %d", i);
 		if (i > progTarget)
 		{
 			progTarget += dprogTarget;
@@ -798,7 +820,19 @@ void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 		SRelement* elem = model.GetElement(i);
 		int len;
 		double *stiff = elem->CalculateStiffnessMatrix(len);
+		if (stiff == NULL)
+		{
+			LOGPRINT("Not enough memory for Element Stiffness matrices\nMemory required: %lg\n", MaxElementMem);
+			ERROREXIT;
+		}
+		if (echoElements)
+		{
+			for (int s = 0; s < len; s++)
+				elf.PrintLine("%lg",stiff[s]);
+		}
 	}
+	if (echoElements)
+		elf.Close();
 
 	LOGPRINT("\n");
 
@@ -891,6 +925,20 @@ void SRanalysis::SetStressMax(SRelement* elem, SRvec3& pos, double svm)
 	maxStressElid = elem->GetId();
 }
 
+void SRanalysis::UpdateCustomCriterion(double stress[])
+{
+	double custom;
+
+	//Replace this with whatever stress criterion is desired
+	{
+		custom = model.math.GetSvm(stress);
+	}
+
+
+	if (custom > maxCustom)
+		maxCustom = custom;
+}
+
 void SRanalysis::SetStressMaxComp(double *stressComp)
 {
 	//check for any components of a stress tensor exceed max stress in model
@@ -976,7 +1024,6 @@ void SRanalysis::ProcessConstraints()
 		//lcs constraints are skipped because they are handled via penalty
 
 	int i, dof, gfun;
-	SRedge* edge;
 	SRconstraint* con;
 	SRnode* node;
 
@@ -1091,7 +1138,6 @@ bool SRanalysis::PreProcessPenaltyConstraints()
 		if (!con->isGcs())
 		{
 			int n = con->GetEntityId();
-			SRnode* node = model.GetNode(n);
 			bool found = false;
 			for (int f = 0; f < model.GetNumFaces(); f++)
 			{
@@ -1218,7 +1264,6 @@ void SRanalysis::ProcessForces()
 				fv[dof] = force->GetForceVal(0, dof);
 			bool needRotate = false;
 			SRmat33 R;
-			double rf, sf;
 			if (force->GetCoordId() != -1)
 			{
 				needRotate = true;
@@ -1264,10 +1309,10 @@ void SRanalysis::ProcessForces()
 		tf->Process();
 
 	ProcessVolumeForces(resF);
-	OUTPRINT("\nResultant load on model:\n");
-	OUTPRINT("   Fx: %lg\n", resF.d[0]);
-	OUTPRINT("   Fy: %lg\n", resF.d[1]);
-	OUTPRINT("   Fz: %lg\n", resF.d[2]);
+	LOGPRINT("\nResultant load on model:\n");
+	LOGPRINT("   Fx: %lg\n", resF.d[0]);
+	LOGPRINT("   Fy: %lg\n", resF.d[1]);
+	LOGPRINT("   Fz: %lg\n", resF.d[2]);
 }
 
 
@@ -1411,7 +1456,7 @@ void SRanalysis::PrintStresses(double *stress)
 	//input:
 		//stress = stress tensor stored as vector
 	for (int i = 0; i < 6; i++)
-		OUTPRINT("%s: %lg\n", stressComp[i], stress[i]);
+		LOGPRINT("%s: %lg\n", stressComp[i], stress[i]);
 }
 
 void SRanalysis::CheckElementsFitInMemory()
@@ -1419,7 +1464,7 @@ void SRanalysis::CheckElementsFitInMemory()
 	//check if all element stiffness matrices will fit in memory
 	//note:
 		//sets class variable elementsInMemory
-	double elStiflen = 0.0;
+	MaxElementMem = 0.0;
 	int numel = model.GetNumElements();
 	for (int e = 0; e < numel; e++)
 	{
@@ -1427,15 +1472,9 @@ void SRanalysis::CheckElementsFitInMemory()
 		int nfun = elem->GetNumFunctions();
 		int neq = 3 * nfun;
 		int len = neq*(neq + 1) / 2;
-		elStiflen += (double) len;
+		MaxElementMem += (double) len;
 	}
-	elStiflen *= sizeof(double);
-	if (elStiflen > MaxElementMem)
-	{
-		LOGPRINT(" fatal error: elements do not fit in memory\n");
-		REPPRINT(" error: elements do not fit in memory\n");
-		ERROREXIT;
-	}
+	MaxElementMem *= sizeof(double);
 }
 
 double* SRanalysis::ReadElementStiffness(SRelement* elem)
@@ -1446,7 +1485,6 @@ double* SRanalysis::ReadElementStiffness(SRelement* elem)
 	//return:
 		//start of element stiffness matrix for this element
 	double *stiff = NULL;
-	int id = elem->GetId();
 	stiff = elem->GetStiffnessMatrix();
 	return stiff;
 }
@@ -1588,7 +1626,7 @@ bool SRanalysis::checkFlattenedElementHighStress()
 	}
 	if (adjacentElemFlattened)
 	{
-		OUTPRINT(" max flattening adjacent to max stress element: %lg", maxFlattenHighStress);
+		LOGPRINT(" max flattening adjacent to max stress element: %lg", maxFlattenHighStress);
 		//ttd: comment out after dbg
 		//plot faces of elements that were flattend more than scaledFlattenTol, but only if they have bdry faces:
 		//post.PlotElems(badAdjElems.GetNum(), badAdjElems.d);
@@ -1617,7 +1655,7 @@ void SRanalysis::SetEdgesToPorder(int p)
 
 void SRanalysis::GetFileNameFromExtension(char* ext, SRstring& name)
 {
-	model.logFile.getFileName().Left('.', name);
+	model.logFile.filename.Left('.', name);
 	name += ".";
 	name += ext;
 }
@@ -1642,7 +1680,6 @@ bool SRanalysis::SingStressCheck()
 	SRelement* elem = model.GetElement(maxStressElid);
 	distTol = elem->GetSize();
 	double sacrDistMin = BIG;
-	int elAtMinDist;
 	for (int e = 0; e < model.GetNumElements(); e++)
 	{
 		SRelement* elem = model.GetElement(e);
@@ -1654,13 +1691,10 @@ bool SRanalysis::SingStressCheck()
 		if (dist < sacrDistMin)
 		{
 			sacrDistMin = dist;
-			elAtMinDist = e;
 		}
 	}
 	if (sacrDistMin < distTol)
 	{
-		int maxStressEluid = model.GetElement(maxStressElid)->GetUserid();
-		int elUidAtmindist = model.GetElement(elAtMinDist)->GetUserid();
 		return true;
 	}
 	else
@@ -1780,7 +1814,7 @@ void SRanalysis::allocateSolutionVector()
 void SRanalysis::PStats()
 {
 	//print p-order statistics to model output file
-	OUTPRINT("P-order    percentage of model");
+	LOGPRINT("P-order    percentage of model");
 	int nedge = model.GetNumEdges();
 	for (int p = 2; p <= maxPinModel; p++)
 	{
@@ -1791,6 +1825,17 @@ void SRanalysis::PStats()
 				edgesAtP++;
 		}
 		double percentage = 100.0* ((double)edgesAtP) / ((double)nedge);
-		OUTPRINT("      %d    %4.2lf", p, percentage);
+		LOGPRINT("      %d    %4.2lf", p, percentage);
 	}
 }
+
+void SRanalysis::zeroStressMax()
+{
+	stressMax = 0.0;
+	for (int i = 0; i < 6; i++)
+		stressMaxComp[i] = 0.0;
+	maxsp1 = 0.0;
+	minsp2 = BIG;
+	maxCustom = 0.0;
+};
+

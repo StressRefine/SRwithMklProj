@@ -31,10 +31,8 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include <stdlib.h>
 #include <search.h>
-#include "SRmodel.h"
 #include "SRanalysis.h"
 #include "SRmachDep.h"
 #include "SRinput.h"
@@ -57,9 +55,9 @@ void SRinput::ReadModel()
 
 	//assign output, results, and combined results names; delete existing
 	//files in case future opens will be for "append":
-	analysis.outdir.Right('\\', tail);
+	analysis.outdir.Right(slashChar, tail);
 	basename = analysis.outdir;
-	basename += "\\";
+	basename += slashStr;
 	basename += tail;
 
 	filename = basename;
@@ -75,7 +73,7 @@ void SRinput::ReadModel()
 
 	if (!analysis.inputFile.Open(SRinputMode))
 	{
-		char *tmp = filename.LastChar('\\', true);
+		const char *tmp = filename.LastChar(slashChar, true);
 		LOGPRINT(" file not found: %s", tmp);
 		ERROREXIT;
 		return;
@@ -461,14 +459,12 @@ void SRinput::InputMaterials()
 	SRstring line;
 	SRmaterial* mat;
 	SRstring type;
-	double E,nu;
 
 	SRfile* f;
 	f = &analysis.inputFile;
 
 	while(1)
 	{
-		double alpha;
 		if(!f->GetLine(line))
 			break;
         if(line.isCommentOrBlank())
@@ -482,7 +478,8 @@ void SRinput::InputMaterials()
 		}
 		mat = model.addMat();
 		mat->setId(model.GetNumMaterials() - 1);
-		SRstring matname = line.Token();
+		SRstring matname;
+		matname = line.Token();
 		mat->setName(matname);
 		double E, nu, rho, tref, alphax, alphay, alphaz, allowableStress;
 		SRcij orthoCij;
@@ -541,9 +538,9 @@ void SRinput::InputMaterials()
 			}
 			if (!gcij.symCheck())
 			{
-				LOGPRINT("improper definition of general anisotropic material %s", matname.str);
+				LOGPRINT("improper definition of general anisotropic material %s", matname.getStr());
 				LOGPRINT("material is not symmetric");
-				REPPRINT("improper definition of general anisotropic material %s", matname.str);
+				REPPRINT("improper definition of general anisotropic material %s", matname.getStr());
 				REPPRINT("material is not symmetric");
 				ERROREXIT;
 			}
@@ -572,7 +569,7 @@ void SRinput::InputCoordinates()
 	SRstring line, type, tok;
 	SRcoord* coord;
 	int ncoord = 0;
-	double alf, bet, gam, x0, y0, z0;
+	double x0, y0, z0;
 	bool gcsaligned;
 
 	while (1)
@@ -726,16 +723,9 @@ void SRinput::InputNodalForces()
 				for (int dof = 0; dof < 3; dof++)
 					forceTmp.setForceVal(0, dof, fg.d[dof]);
 				forceTmp.setCoordId(-1);
-#if 1
-				LOGPRINTNORET("%d gcs ", node->GetUserid());
-				for (int dof = 0; dof < 3; dof++)
-					LOGPRINTNORET(" %lg", fg.d[dof]);
-				LOGPRINTRET;
-#endif
 			}
 		}
 
-		SRnode* node = model.GetNode(nId);
 		int nnodalForce = currentNodeForceStore.d[nId].forces.GetNum();
 
 		//check for duplicate force, same node, could happen e.g. at a corner
@@ -758,7 +748,6 @@ void SRinput::InputNodalForces()
 		{
 			//new force
 			int forceid = currentForces.GetNum();
-			int nprev = currentNodeForceStore.d[nId].forces.GetNum();
 			currentNodeForceStore.d[nId].forces.PushBack(forceid);
 			force = currentForces.Add();
 			force->Copy(forceTmp);
@@ -976,7 +965,6 @@ void SRinput::InputFaceTractions()
 			continue;
 		if (line == "end")
 			break;
-		int forceId = model.GetNumForces();
 		int eluid;
 		line.TokRead(eluid);
 		int elId = elemFind(eluid);
@@ -1196,9 +1184,7 @@ void SRinput::InputThermal()
 
 	SRstring tok, line;
 
-	SRASSERT(model.GetThermalForce() == NULL);//duplicate thermal forces not allowed
 	model.allocateThermalForce();
-	SRASSERT(model.GetThermalForce() != NULL);
 	SRthermalForce* therm = model.GetThermalForce();
 	double temp;
 	analysis.inputFile.GetLine(line);
@@ -1246,9 +1232,8 @@ void SRinput::InputNodalConstraints()
 
 	SRstring tok, line;
 	SRconstraint* constraint;
-	int dof, id;
+	int dof;
 	int nodeuid;
-	double enfd;
 
 	SRconstraint conTmp;
 
@@ -1273,7 +1258,6 @@ void SRinput::InputNodalConstraints()
 		if (nId == -1)
 			continue;//node doesn't exist in model
 
-		SRnode* node = model.GetNode(nId);
 		//read in the constraint, then check for duplicate constraints on this node:
 		conTmp.Clear();
 		conTmp.SetType(nodalCon);
@@ -1283,7 +1267,7 @@ void SRinput::InputNodalConstraints()
 		{
 			conTmp.SetConstrainedDof(dof,false);
 			tok = line.Token();
-			if (tok.len == 1 && tok == "-")
+			if (tok.getLength() == 1 && tok == "-")
 				continue;
 			conTmp.SetConstrainedDof(dof, true);
 			enfd = tok.RealRead();
@@ -1534,8 +1518,7 @@ void SRinput::readSettings()
 	if (!settingsOpened)
 		return;
 
-	SRmachDep::GetTime(line);
-	LOGPRINT("Stress Refine %s\n", line.str);
+	LOGPRINT("Stress Refine\n");
 	LOGPRINT("\nCustom Settings for this run:");
 	bool anyCustom = false;
 	userPSettings = false;
@@ -1544,8 +1527,7 @@ void SRinput::readSettings()
 
 	bool lineWasRead = false;
 
-	SRmachDep::GetTime(line);
-	LOGPRINT("Stress Refine %s\n", line.str);
+	LOGPRINT("Stress Refine\n");
 	LOGPRINT("\nCustom Settings for this run:");
 
 	while (settingsOpened)
@@ -1671,7 +1653,7 @@ void SRinput::readSettings()
 			anyCustom = true;
 		}
 		else
-			LOGPRINT("unrecognized setting: %s", line.str);
+			LOGPRINT("unrecognized setting: %s", line.getStr());
 	}
 	if (!anyCustom)
 		LOGPRINT("   --None");

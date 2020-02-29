@@ -31,7 +31,6 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include <stdlib.h>
 #include <search.h>
 #include "SRmodel.h"
@@ -58,7 +57,7 @@ void SRpostProcess::PostProcess()
 		mat->PutMaxSvm(0.0);
 	}
 
-	int i, j, dof;
+	int i;
 	SRnode* node;
 
 	int numnode = model.GetNumNodes();
@@ -90,7 +89,6 @@ void SRpostProcess::PostProcess()
 	FRDPRINT(" -5  SXY         1    4    1    2");
 	FRDPRINT(" -5  SYZ         1    4    2    3");
 	FRDPRINT(" -5  SZX         1    4    3    1");
-	double stressComp;
 	double stressConv = analysis.getstressUnitConversion();
 	for (i = 0; i < numnode; i++)
 	{
@@ -188,13 +186,12 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 	static int numNodesTotalBrick = 27; //nodes, centroid, face centroids
 	static int numNodesTotalTet = 15; //nodes, centroid, face centroids
 	static int numNodesTotalWedge = 21; //nodes, centroid, face centroids
-	int i, nn, ne, nnt;
+	int i, nn, ne;
 	double r, s, t;
 	double stress[6];
 
 	nn = elem->GetNumNodes();
 	ne = elem->GetNumLocalEdges();
-	nnt = nn + ne;
 	SRnode* node;
 	SRedge* edge;
 	int id;
@@ -204,11 +201,9 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 	elem->SetBasisData();
 	bool hasAllowable = !checkMaxOnly && analysis.getallMatsHaveAllowable() && elem->GetMaterial()->isAllowableAssigned();
 	double Allowable = 0.0;
-	int matid = elem->GetMaterial()->getId();
 	if(hasAllowable)
 		Allowable = elem->GetMaterial()->GetAllowableStress();
 	int numNodesYielded = 0;
-	bool yielded = false;
 	for (i = 0; i < nn; i++)
 	{
 		id = elem->GetNodeId(i);
@@ -327,12 +322,11 @@ void SRpostProcess::fillSacricialElementNodalStress(SRelement* elem, bool doMaxC
 		//elem = pointer to element
 	//note:
 		//fills contribution of this element to nodalStress
-	int i, nn, ne, nnt;
+	int i, nn, ne;
 	double r, s, t;
 	double stress[6];
 	nn = elem->GetNumNodes();
 	ne = elem->GetNumLocalEdges();
-	nnt = nn + ne;
 	SRedge* edge;
 	int id;
 	elem->SetBasisData();
@@ -348,7 +342,6 @@ void SRpostProcess::fillSacricialElementNodalStress(SRelement* elem, bool doMaxC
 	for (i = 0; i < nn; i++)
 	{
 		id = elem->GetNodeId(i);
-		SRnode* node = model.GetNode(id);
 		if (doMaxClipping && nodalStressCount.Get(id) != 0)
 			continue;
 		elem->NodeNaturalCoords(i, r, s, t);
@@ -382,7 +375,6 @@ void SRpostProcess::fillSacricialElementNodalStress(SRelement* elem, bool doMaxC
 		if (edge->GetPorder() < 2)
 			continue;
 		id = edge->GetMidNodeId();
-		SRnode* node = model.GetNode(id);
 		if (doMaxClipping && nodalStressCount.Get(id) != 0)
 			continue;
 
@@ -436,6 +428,7 @@ double SRpostProcess::StressMaxCheck(SRelement* elem, SRvec3& pos, double stress
 	if (svm> analysis.GetStressMax())
 		analysis.SetStressMax(elem, pos, svm);
 	analysis.SetStressMaxComp(stress);
+	analysis.UpdateCustomCriterion(stress);
 	return svm;
 }
 
@@ -496,7 +489,7 @@ int SRpostProcess::MeshToFrd()
 	FRDPRINT("    1C"); // ''1C'' defines a new calc
 	FRDPRINT("    1UDATE   26.march.2000"); // ''1U'' stores user job - information, can be any string, ttd put real date, add more lines, e.g. PGM stressrefine, model file path 
 	//nodes:
-	int i, j, dof;
+	int i, j;
 	SRnode* node;
 	int numnode = model.GetNumNodes();
 	int numNodeOut = 0;
@@ -652,7 +645,9 @@ double SRpostProcess::ElementStrainSmoothByMaterial()
 
 	//sacrificial elements are smoothed together with other elements of same material to avoid discontinuity at 
 	//boundary. sacrificial elements are frozen at p2 to minimize effects of singularities
-
+#ifdef NOSOLVER
+	return 0.0;
+#else
 	int e, i, j, nint, gp, gi, gj, stiffLoc, comp, symloc, elmax;
 	double r, s, t, w, bi, bj, detJ, strain[6], ae, strainMax = 0.0, stress[6], svm, svmmax = 0.0;
 	double eT, eTmax = 0.0;
@@ -727,7 +722,6 @@ double SRpostProcess::ElementStrainSmoothByMaterial()
 			{
 				gi = elem->GetFunctionNumber(i);
 				eqi = model.GetSmoothFunctionEquation(gi);
-				SRASSERT(eqi >= 0);
 				bi = basisvec[i] * w;
 				for (comp = 0; comp < 6; comp++)
 					strainRhsvec[comp][eqi] += (strain[comp] * bi);
@@ -754,4 +748,5 @@ double SRpostProcess::ElementStrainSmoothByMaterial()
 	par->clear();
 
 	return strainMax;
+#endif
 }

@@ -33,6 +33,8 @@ with an equivalent open-source solver
 
 #if !defined(SRMKLUTIL_INCLUDED)
 #define SRMKLUTIL_INCLUDED
+#include "SRlinux.h"
+#ifndef NOSOLVER
 #include "mkl.h"
 #include "SRutil.h"
 
@@ -298,6 +300,8 @@ private:
 	double* d;
 	MKL_INT64 num;
 };
+
+#endif// NOSOLVER
 
 #endif //!defined(SRMKLUTIL_INCLUDED)
 

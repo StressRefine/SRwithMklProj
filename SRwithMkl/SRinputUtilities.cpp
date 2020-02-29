@@ -33,10 +33,8 @@ with an equivalent open-source solver
 
 
 
-#include "stdafx.h"
 #include <stdlib.h>
 #include <search.h>
-#include "SRmodel.h"
 #include "SRanalysis.h"
 #include "SRmachDep.h"
 #include "SRinput.h"
@@ -217,7 +215,6 @@ int SRinput::GetCoordId(SRstring &name)
 		if (name == coord->GetName())
 			return i;
 	}
-	SRASSERT(false);
 	return -1;
 }
 void SRinput::SortNodes()
@@ -257,7 +254,6 @@ int SRinput::nodalToFaceConstraints(bool countOnly)
 		int nn = face->GetNumNodes();
 
 		bool allNodesConstrained = true;
-		bool anyNodeConstrained = false;
 		for (int n = 0; n < nn; n++)
 		{
 			int nid = face->GetNodeId(n);
@@ -474,8 +470,6 @@ int SRinput::nodalToFaceForces(bool countOnly)
 	for (int f = 0; f < nface; f++)
 	{
 		SRface* face = model.GetFace(f);
-		for (int i = 0; i < face->GetNumLocalEdges(); i++)
-			int mid = face->getLocalEdge(i)->GetEdge()->GetMidNodeId();
 		if (face->GetElementOwner(1) != -1) //not boundary face
 			continue;
 
@@ -524,12 +518,9 @@ int SRinput::nodalToFaceForces(bool countOnly)
 			SRforce* nodeForce0 = nodeForceStore.Get(nid0).GetForce(iforce0);
 			int coord0 = nodeForce0->GetCoordId();
 			bool pressure0 = nodeForce0->isPressure();
-			double fv0[3];
 			int ndof = 3;
 			if (pressure0)
 				ndof = 1;
-			for (int dof = 0; dof < ndof; dof++)
-				fv0[dof] = nodeForce0->GetForceVal(0, dof);
 
 			SRforce* nodeForce;
 
@@ -856,7 +847,7 @@ void SRinput::checkBoundaryEdgeNeighbors(int parentMultifaceForceGroupId, SRface
 void SRinput::EnergySmoothNodalForces()
 {
 	//convert nodel force values on faces belonging to a group to smooth tractions, using consistent energy approach
-
+#ifndef NOSOLVER
 	if (!analysis.doEnergySmooth)
 		return;
 
@@ -969,16 +960,17 @@ void SRinput::EnergySmoothNodalForces()
 			for (int n = 0; n < faf->GetNumForces(); n++)
 			{
 				int nuid = face->GetNodeOrMidnode(n)->GetUserid();
-				LOGPRINTNORET("%d", nuid);
+				LOGPRINT("%d", nuid);
 				for (int dof = 0; dof < 3; dof++)
 				{
 					double ft = faf->GetForceVal(n, dof);
-					LOGPRINTNORET(" %lg", ft);
+					LOGPRINT(" %lg", ft);
 				}
-				LOGPRINTRET;
+				LOGPRINT("\n");
 			}
 		}
 	}
+#endif
 }
 
 

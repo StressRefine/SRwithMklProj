@@ -29,18 +29,16 @@ with an equivalent open-source solver
 // SRwithMkl.cpp : Defines the entry point for the console application.
 //
 
-#include "stdafx.h"
 #include <vector>
 #include "SRanalysis.h"
-#include <direct.h>
-#include <stdlib.h>
-#include <process.h>
 
+#include <stdlib.h>
+#ifndef linux
+#include <direct.h>
+#include <process.h>
+#endif
 
 using namespace std;
-
-
-#define LOOP_COUNT 10
 
 
 //One global instance of "analysis" and "model"
@@ -55,24 +53,19 @@ using namespace std;
 
 int main(int argc, char *argv[])
 {
-	_set_output_format(_TWO_DIGIT_EXPONENT);
-
 	SRstring line;
-	bool batchMode = false;
 
 	char buf[256];
-	_getcwd(buf, sizeof(buf));
+	MDGETCWD(buf, sizeof(buf));
 	SCREENPRINT(" _getcwd: %s", buf);
 	analysis.wkdir = buf;
-	analysis.wkdir += "\\";
-	SCREENPRINT(" wkdir: %s", analysis.wkdir.str);
+	analysis.wkdir += slashStr;
+	SCREENPRINT(" wkdir: %s", analysis.wkdir.getStr());
 	line = analysis.wkdir;
 	line += "engine.log";
 	model.logFile.setFileName(line);
 	model.logFile.Delete();
-	SRmachDep::GetTime(line);
-	LOGPRINT("%s", line.str);
-	LOGPRINT("wkdir: %s", analysis.wkdir.str);
+	LOGPRINT("wkdir: %s", analysis.wkdir.getStr());
 
 	SRstring tok;
 
@@ -83,53 +76,48 @@ int main(int argc, char *argv[])
 	SRfile modelF;
 	if (!modelF.Open(line, SRinputMode))
 	{
-		LOGPRINT("ModelFileName file %s not found\n", line.str);
+		LOGPRINT("ModelFileName file %s not found\n", line.getStr());
 		ERROREXIT;
 	}
 
 	modelF.GetLine(foldername);
 	modelF.Close();
 
-	foldername.Right('\\', tail);
-	if (tail.len == 0)
+	foldername.Right(slashChar, tail);
+	if (tail.getLength() == 0)
 	{
 		LOGPRINT("Error in ModelFileName file ");
 		ERROREXIT;
-}
+	}
 	analysis.fileNameTail = tail;
 	filename = foldername;
-	filename += "\\";
+	filename += slashStr;
 	filename += tail;
 	filename += ".msh";
-	if (!analysis.inputFile.Existcheck(filename.str))
+	if (!analysis.inputFile.Existcheck(filename.getStr()))
 	{
-		LOGPRINT("input file %s not found\n", filename.str);
+		LOGPRINT("input file %s not found\n", filename.getStr());
 		exit(0);
 	}
 
 	analysis.outdir = foldername;
 	analysis.inputFile.setFileName(filename);
-	LOGPRINT("\nStressRefine\n model: %s\n", tail.str);
-	SCREENPRINT("\nStressRefine\n model: %s\n", tail.str);
+	LOGPRINT("\nStressRefine\n model: %s\n", tail.getStr());
+	SCREENPRINT("\nStressRefine\n model: %s\n", tail.getStr());
 
-	model.reportFile.setFileName(analysis.outdir);
-	model.reportFile.catFileName("\\report.txt");
-	if (model.reportFile.Existcheck())
-		model.reportFile.Delete();
-	model.reportFile.Open(SRoutputMode);
-	SRmachDep::GetTime(line);
-	model.reportFile.PrintLine("stressRefine Copyright (C) 2020 Richard B King.");
-	model.reportFile.PrintLine("This software uses the Intel MKL library Copyright (c) 2018 Intel Corporation.");
-	model.reportFile.PrintLine("%s   Model: %s\n", line.str, analysis.fileNameTail.str);
-	model.reportFile.Close();
+	model.repFile.setFileName(analysis.outdir);
+	model.repFile.filename.Cat(slashStr);
+	model.repFile.filename.Cat("report.txt");
+	if (model.repFile.Existcheck())
+		model.repFile.Delete();
+	model.repFile.Open(SRoutputMode);
+	model.repFile.PrintLine("stressRefine Copyright (C) 2020 Richard B King.");
+	model.repFile.PrintLine("This software uses the Intel MKL library Copyright (c) 2018 Intel Corporation.");
+	model.repFile.PrintLine("Model: %s\n", analysis.fileNameTail.getStr());
+	model.repFile.Close();
 
-	filename.Left('.', analysis.settingsFile.getFileName());
-	analysis.settingsFile.catFileName(".srs");
-	filename.Left('.', line);
-	line.Cat(".out");
-	model.setOutFileName(line.str);
-	if (model.outFile.Existcheck())
-		model.outFile.Delete();
+	filename.Left('.', analysis.settingsFile.filename);
+	analysis.settingsFile.filename.Cat(".srs");
 
 	analysis.CreateModel();
 
@@ -137,20 +125,14 @@ int main(int argc, char *argv[])
 
 	analysis.CleanUp();
 
-	model.reportFile.Open(SRappendMode);
-	model.reportFile.PrintReturn();
-	model.reportFile.PrintLine("Adaptive Solution Completed\n");
-	model.reportFile.Close();
+	model.repFile.Open(SRappendMode);
+	model.repFile.PrintReturn();
+	model.repFile.PrintLine("Adaptive Solution Completed\n");
+	model.repFile.Close();
 	LOGPRINT("\nStress Refine Run Completed\n");
-	SRanalysis::TimeStamp();
 
 	LOGPRINT("SUCCESSFUL COMPLETION");
-
-	if (!batchMode)
-	{
-		SCREENPRINT("hit any char to exit");
-		int c = getchar();
-	}
+	SCREENPRINT("SUCCESSFUL_COMPLETION");
 
 	return 0;
 }

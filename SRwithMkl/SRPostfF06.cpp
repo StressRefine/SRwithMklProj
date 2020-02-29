@@ -31,7 +31,6 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include "SRmodel.h"
 #include "SRanalysis.h"
 #include "SRelement.h"
@@ -47,7 +46,7 @@ extern SRanalysis analysis;
 static char bdfbuf[20];
 static void bdfEwrite(double r)
 {
-	sprintf_s(bdfbuf, "%13.6lE", r);
+	SPRINTF(bdfbuf, "%13.6lE", r);
 	int l = strlen(bdfbuf);
 	char e1 = bdfbuf[l - 2];
 	char e2 = bdfbuf[l - 1];
@@ -98,7 +97,6 @@ void SRpostProcess::OutputF06()
 	analysis.f06outFile.PrintLine(" ");
 
 	double stressConv = 1.0;
-	double lengthConv = 1.0;
 
 	double svm;
 	double stress[6];
@@ -106,7 +104,7 @@ void SRpostProcess::OutputF06()
 	//stress header:
 	writeHeaderF06();
 
-	double r, s, t, rf, sf;
+	double r, s, t;
 
 	for (e = 0; e < model.GetNumElements(); e++)
 	{
@@ -120,7 +118,6 @@ void SRpostProcess::OutputF06()
 			analysis.f06outFile.PrintLine("0    %5d           0GRID CS 4 GP", euid);
 		nlines++;
 		int nn = elem->GetNumNodes();
-		int n1, n2;
 
 		model.map.ElementCentroid(elem, r, s, t);
 		elem->GetStress(r, s, t, stress);

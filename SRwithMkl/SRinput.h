@@ -34,6 +34,7 @@ with an equivalent open-source solver
 #if !defined(SRINPUT_INCLUDED)
 #define SRINPUT_INCLUDED
 
+#include "SRmodel.h"
 #include "SRfile.h"
 #include "SRstring.h"
 

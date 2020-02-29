@@ -32,12 +32,12 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <omp.h>
-#include "SRmodel.h"
+#include "SRlinux.h"
 #include "SRanalysis.h"
+#include "SRmodel.h"
 #include "SRinput.h"
 
 
@@ -45,6 +45,7 @@ with an equivalent open-source solver
 #undef THIS_FILE
 static char THIS_FILE[] = __FILE__;
 #endif
+#ifndef NOSOLVER
 
 extern SRmodel model;
 extern SRanalysis analysis;
@@ -52,8 +53,6 @@ extern SRanalysis analysis;
 #ifdef _DEBUG
 static bool solverecho = true;
 #endif
-
-#define MAXINT32 2E9
 
 SRpardiso::SRpardiso()
 {
@@ -376,21 +375,10 @@ void SRpardiso::solve(bool smoothing)
 
 	solvphase = 11; //analyze the matrix;
 	pardiso(parSolveHandle, &maxfct, &mnum, &mtype, &solvphase, &neq, (void*)a, ia, ja, permp, &nrhs, iparm, &msglvl, (void*)b, (void*)x, &error);
-	int memNeeded = iparm[14]; //see mkl documentation
-	int mem2 = iparm[15] + iparm[16];
-	if (mem2 > memNeeded)
-		memNeeded = mem2;
-
-	double MbytesNeeded = ((double)memNeeded) / 1024.0;
-
-	if (!smoothing)
-		LOGPRINT("Memory needed for equation solving (Mbytes): %lg\n", MbytesNeeded);
-
-	double availmem = SRmachDep::availMemCheck();
 
 	LOGPRINT("Pardiso sparse equation solving ");
 
-	if (memNeeded > availmem)
+	if (error == -2)
 		oocNeeded = true;
 
 	if (oocNeeded)
@@ -464,3 +452,4 @@ void SRpardiso::solve(bool smoothing)
 	pardiso(parSolveHandle, &maxfct, &mnum, &mtype, &solvphase, &neq, (void*)a, ia, ja, permp, &nrhs, iparm, &msglvl, (void*)b, (void*)x, &error);
 #endif
 }
+#endif //NOSOLVER

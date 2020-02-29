@@ -49,7 +49,11 @@ enum SRstressComponent { xxComponent, yyComponent, zzComponent, xyComponent, xzC
 class SRpostStressVector
 {
 public:
-	SRpostStressVector(){ for (int i = 0; i < 6; i++) stress[i] = 0.0; };
+	SRpostStressVector()
+	{
+		for (int i = 0; i < 6; i++) stress[i] = 0.0;
+	};
+
 	void PlusAssign(double stresst[])
 	{
 		for (int i = 0; i < 6; i++)
@@ -83,10 +87,8 @@ public:
 	void CalculateElementStresses(SRelement* elem, bool checkMaxOnly = false);
 	void fillSacricialElementNodalStress(SRelement* elem, bool doMaxClipping);
 	void PostProcessElementStresses();
-	void Cleanup();
 	double *getSmoothedStrainVec(int i){ return smoothedStrains[i].GetVector(); };
 	int getElSmooth(int i){ return elSmooth.Get(i); };
-	bool findSacrificialElementsAtKinks();
 	int MeshToFrd();
 	double getNodalStress(int i, int j){ return nodalStress.Get(i, j); };
 	SRvec3& getNodeDisp(int i) { return nodeDisps.Get(i); };
@@ -110,7 +112,6 @@ public:
 
 	//f06 output:
 	void OutputF06();
-	void OutputF06UseElementGetStress();
 	void pageCheckF06(int& nlines, bool disp = false);
 	void writeHeaderF06();
 	void writeDispHeaderF06();

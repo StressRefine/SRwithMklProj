@@ -31,7 +31,6 @@ with an equivalent open-source solver
 //
 //////////////////////////////////////////////////////////////////////
 
-#include "stdafx.h"
 #include "SRmodel.h"
 #include "SRanalysis.h"
 
@@ -320,12 +319,9 @@ bool SRerrorCheck::AutoSacrificialElements()
 
 	SRface* face2;
 	double dotmin = 1.0;
-	bool AnyExoneratedByLowStressJump = false;
 
 	for (i = 0; i < nej; i++)
 	{
-		SRedge* edge = model.GetEdge(i);
-
 		int f1 = edgeface1.Get(i);
 		int f2 = edgeface2.Get(i);
 		if (f1 == -1 || f2 == -1)
@@ -458,11 +454,6 @@ bool SRerrorCheck::AutoSacrificialElements()
 					if (normdot < dotmin)
 					{
 						dotmin = normdot;
-						SRelement* elem;
-						int eid = face->GetElementOwner(0);
-						elem = model.GetElement(eid);
-						eid = face2->GetElementOwner(0);
-						elem = model.GetElement(eid);
 					}
 					if (normdot < -0.1)
 					{
@@ -547,18 +538,18 @@ bool SRerrorCheck::AutoSacrificialElements()
 
 	if (numsacr > 0)
 	{
-		OUTPRINT("Elements detected adjacent to singularities");
-		OUTPRINT("These elements will be ignored for error checking and for computing max stress in model");
-		OUTPRINT("The stress is theoretically infinite at these singularities.\nPlease review your model geometry, loads, and constraints to verify that this was your intent");
+		LOGPRINT("Elements detected adjacent to singularities");
+		LOGPRINT("These elements will be ignored for error checking and for computing max stress in model");
+		LOGPRINT("The stress is theoretically infinite at these singularities.\nPlease review your model geometry, loads, and constraints to verify that this was your intent");
 	}
 	if (numnonsacr < 2)
 	{
-		OUTPRINT("Warning: there are less than two nonsingular elements in model. \n");
-		OUTPRINT("          There may not be sufficient information for error checking\n");
-		OUTPRINT("          and adaptivity\n\n");
+		LOGPRINT("Warning: there are less than two nonsingular elements in model. \n");
+		LOGPRINT("          There may not be sufficient information for error checking\n");
+		LOGPRINT("          and adaptivity\n\n");
 	}
 	else
-		OUTPRINT("\n");
+		LOGPRINT("\n");
 
 	for (i = 0; i < model.GetNumElements(); i++)
 	{
@@ -741,7 +732,7 @@ double SRerrorCheck::getElementFaceTraction(int lface, SRface *face, SRelement* 
 	face->Position(rf, sf, facePos);
 	model.map.ElementNaturalCoordsFromFace(elem, lface, rf, sf, r, s, t);
 
-	double detj = elem->FillMapping(r, s, t);
+	elem->FillMapping(r, s, t);
 	elem->FillBasisFuncs(r, s, t, derivonly);
 	eT = elem->CalculateRawStrain(r, s, t, strain, etx, ety, etz);
 	elem->StraintoStress(r, s, t, strain, stress);
