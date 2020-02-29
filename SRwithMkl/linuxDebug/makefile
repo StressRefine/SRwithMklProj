@@ -43,7 +43,7 @@ all: SRexeUsingLib
 SRexeUsingLib: $(OBJS) $(USER_OBJS)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C++ Linker'
-	g++ -L/home/rich/opt/newEclipseWS/SRlibSimple/Debug -o "SRexeUsingLib" $(OBJS) $(USER_OBJS) $(LIBS)
+	g++ -L/home/rich/opt/newEclipseWS/SRlibSimple/Debug -L/opt/intel/compilers_and_libraries_2020.0.166/linux/mkl/lib/intel64_lin -o "SRexeUsingLib" $(OBJS) $(USER_OBJS) $(LIBS) -static
 	@echo 'Finished building target: $@'
 	@echo ' '
 
