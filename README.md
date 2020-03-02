@@ -17,7 +17,12 @@
  a. comment out the line "#define NOSOLVER" in SRlinux.h
  b. download the free version of intel mkl to your machine (https://software.intel.com/en-us/mkl/choose-download)
  
-
+ Note on multi-threading: stressRefine uses openmp to multhithread the element stifness calculation and the solver bookkeeping.
+ Also the Intel Mkl solver is multithreaded if linked to the appropriate library. This is currently all suppressed in linux,
+ because the "pragma" directives that work on windows did not compile on linux. To fix this would requre removing the "#ifndef Linux" 
+ that is now arround the pragmas. Also, in the Intel link line advisor, tell it you want multi-threaded and it will recommend a 
+ replacement for the mkl_sequential library.
+ 
 
  Windows Visual Studio version that was last modified using VS2013. That and any newer version should work to compile this project.
  It is in C++. Doubleclick on the ".sln" file to open the project.
