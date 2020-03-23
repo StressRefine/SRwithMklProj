@@ -31,6 +31,7 @@ with an equivalent open-source solver
 
 #include <vector>
 #include "SRanalysis.h"
+#include "globalWrappers.h"
 
 #include <stdlib.h>
 #ifndef linux
@@ -40,16 +41,14 @@ with an equivalent open-source solver
 
 using namespace std;
 
-
-//One global instance of "analysis" and "model"
+//One global instance of "analysis""
 SRanalysis analysis;
-SRmodel model;
+
+extern SRmodel model;
 
 using namespace std;
 
-
 #define LOOP_COUNT 10
-
 
 int main(int argc, char *argv[])
 {
@@ -60,6 +59,7 @@ int main(int argc, char *argv[])
 	SCREENPRINT(" _getcwd: %s", buf);
 	analysis.wkdir = buf;
 	analysis.wkdir += slashStr;
+
 	SCREENPRINT(" wkdir: %s", analysis.wkdir.getStr());
 	line = analysis.wkdir;
 	line += "engine.log";

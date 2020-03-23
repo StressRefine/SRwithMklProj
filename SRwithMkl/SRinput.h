@@ -86,7 +86,7 @@ public:
 	void InputFacePressures();
 	void InputMaterials();
 	void CountEntities(int& num);
-	void CountElements(int& num);
+	int CountElements(int& numbricks, int& numwedges, int& numtets);
 	void InputElements();
 	void InputNodes();
 	int NodeFind(int uid);
@@ -94,7 +94,6 @@ public:
 	void ReadModel();
 	int nodalToFaceConstraints(bool countOnly);
 	int nodalToFaceForces(bool countOnly);
-	int elemFaceFind(SRelement* elem, int nv[], int gno[]);
 	void InputFaceTractions();
 	void FillAndSortNodeUids();
 	void equivMatTest();

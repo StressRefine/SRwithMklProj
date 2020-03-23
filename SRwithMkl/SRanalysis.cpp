@@ -34,6 +34,7 @@ with an equivalent open-source solver
 #include <stdlib.h>
 #include "SRanalysis.h"
 #include "SRinput.h"
+#include "globalWrappers.h"
 #ifndef NOSOLVER
 #include "mkl.h"
 #endif
@@ -88,12 +89,8 @@ void SRanalysis::Initialize()
 	maxPorderLowStress = 6;
 	maxPinModel = 2;
 	adaptLoopMax = MAXADAPTLOOPS;
-	echoElements = false;
-#ifdef NOSOLVER
-	echoElements = true;
-#endif
-
-	errorChecker.Initialize();
+	numSacrElem = 0;
+	initializeErrorCheck();
 }
 
 
@@ -172,15 +169,15 @@ void SRanalysis::Run()
 		LOGPRINT("Maximum Polynomial Order in Model: %d\n", maxPinModel);
 		model.setVolume(0.0);
 
-		NumberGlobalFunctions();
+		numberGlobalFunctions();
 
 		ProcessConstraints();
 
-		NumberEquations();
+		numEquations = numberEquations();
 
 		allocateSolutionVector();
 
-		model.allocateSmallElementData(numEquations, anyLcsEnfd);
+		model.allocateSmallElementData(anyLcsEnfd);
 
 		checkElementMapping();
 
@@ -284,7 +281,7 @@ void SRanalysis::Run()
 		if (SingStressCheck())
 			REPPRINT("Singular\n");
 	}
-	if (errorChecker.getSmallMaxStressDetected())
+	if (checkForSmallMaxStress())
 		REPPRINT("SmallStressDetected\n");
 	if (flattenedWarningNeeded)
 		REPPRINT("Flattened High StressElement\n");
@@ -400,17 +397,16 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 	//notes:
 		//adaptivity steps:
 		//calculate raw strains and perform smoothing (in errorChecker.SetUp)
-		//calculate errors (in errorChecker.SetUp):
-			//1. smoothed vs raw strains
-			//2. traction jumps across shared faces
-			//3. traction jumps vs applied loads
-		//use errors to determine next p level (in errorChecker.FindRequiredPOrder)
+		//calculate errors
+			//1. traction jumps across shared faces
+			//2. traction jumps vs applied loads
+		//use errors to determine next p level (in model.FindNextP)
 
 	int i, e;
 	SRedge *edge;
 	SRelement *elem;
 	int p;
-	bool pup, anypup = false;
+	bool pup = false, anypup = false;
 	errorMax = 0.0;
 
 	int maxp0 = maxPinModel;
@@ -422,12 +418,21 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 	else if (maxPorder > maxPorderFinalAdapt)
 		maxPorder = maxPorderFinalAdapt;
 
-	errorChecker.SetUp(finalAdapt);
+
+	for (int e = 0; e < model.GetNumElements(); e++)
+	{
+		SRelement* elem = model.GetElement(e);
+		elem->DownloadDisplacement();
+	}
+	post.GlobalStrainSmooth();
+	post.CalculateMaxStress();
+	setupErrorCheck(finalAdapt, stressMax, ErrorTolerance, maxPorder, maxPJump, maxPorderLowStress);
+
 
 	if (pIteration == 0 && detectSacrificialElements)
 	{
-		bool AnySacrElems = errorChecker.AutoSacrificialElements();
-		if (AnySacrElems)
+		numSacrElem = CheckAutoSacrificialElements();
+		if (numSacrElem > 0)
 		{
 			//this has changed sacrificial element status, so redo max calculation:
 			post.CalculateMaxStress();
@@ -449,7 +454,7 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 		anypup = AdaptUniform(pIteration, checkErrorOnly);
 		if (checkErrorOnly)
 		{
-			errorChecker.CleanUp();
+			CleanUpErrorCheck();
 			return false;
 		}
 		for (e = 0; e < model.GetNumElements(); e++)
@@ -458,7 +463,7 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 			elem->SetPChanged(true);
 		}
 
-		errorChecker.CleanUp();
+		CleanUpErrorCheck();
 		return anypup;
 	}
 	int maxpSacr = 0;
@@ -466,7 +471,7 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 	{
 		elem = model.GetElement(e);
 		elem->SetPChanged(false);
-		pup = errorChecker.FindRequiredPOrder(elem, p);
+		pup = FindNextP(elem->GetId(), &p);
 		if (pup)
 		{
 			if (!elem->isSacrificial())
@@ -486,7 +491,7 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 
 	if (checkErrorOnly)
 	{
-		errorChecker.CleanUp();
+		CleanUpErrorCheck();
 		maxPinModel = maxp0;
 		return false;
 	}
@@ -498,7 +503,7 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 
 	if (!anypup)
 	{
-		errorChecker.CleanUp();
+		CleanUpErrorCheck();
 		return anypup;
 	}
 
@@ -531,7 +536,7 @@ bool SRanalysis::Adapt(int pIteration, bool checkErrorOnly)
 		}
 	}
 
-	errorChecker.CleanUp();
+	CleanUpErrorCheck();
 	return anypup;
 }
 
@@ -557,7 +562,9 @@ bool SRanalysis::AdaptUniform(int pIteration, bool checkErrorOnly)
 		elem = model.GetElement(e);
 		if (elem->isSacrificial())
 			continue;
-		errorChecker.FindError(elem);
+		
+		double error = FindElementError(elem->GetId());
+		setErrorMax(error, elem->GetUserid());
 	}
 
 	errorMax = CalculateMaxErrorForOutput();
@@ -565,7 +572,7 @@ bool SRanalysis::AdaptUniform(int pIteration, bool checkErrorOnly)
 
 	if (checkErrorOnly)
 	{
-		errorChecker.CleanUp();
+		CleanUpErrorCheck();
 		return false;
 	}
 
@@ -601,202 +608,15 @@ bool SRanalysis::AdaptUniform(int pIteration, bool checkErrorOnly)
 	return true;
 }
 
-void SRanalysis::NumberGlobalFunctions()
-{
-	//assign global function numbers to all functions in model
-
-	SRnode* node;
-	SRedge* edge;
-	SRface* face;
-	SRelement* elem;
-	int i, n, nint;
-	int fun;
-	int j, k, pej;
-	int lfun, gfun;
-
-	//allocate space for function numbers for edges, faces, and elements:
-	for (i = 0; i < model.GetNumEdges(); i++)
-	{
-		edge = model.GetEdge(i);
-		n = 1 + edge->GetPorder();
-		edge->AllocateGlobalFunctionNumbers(n);
-	}
-	for (i = 0; i < model.GetNumFaces(); i++)
-	{
-		face = model.GetFace(i);
-		n = model.basis.CountFaceTotalFunctions(face, j);
-		face->AllocateGlobalFunctionNumbers(n);
-	}
-	for (i = 0; i < model.GetNumElements(); i++)
-	{
-		elem = model.GetElement(i);
-		n = model.basis.CountElementFunctions(elem, nint);
-		elem->AllocateGlobalFunctionNumbers(n);
-	}
-
-	//for nodes, assign a function number unless it is a midside node
-	//or orphan:
-	fun = 0;
-	for (i = 0; i < model.GetNumNodes(); i++)
-	{
-		node = model.GetNode(i);
-		if (!node->isMidSide() && !node->isOrphan())
-		{
-			node->PutGlobalFunctionNumber(fun);
-			fun++;
-		}
-	}
-
-	//edges:
-	//assign p2 funs 1st for easier mapping of p2 soln to adapted solns (e.g. itsolv):
-	for (i = 0; i < model.GetNumEdges(); i++)
-	{
-		edge = model.GetEdge(i);
-		edge->AssignGlobalFunctionNumbers(fun, 2, 2);
-		//assign the same function number to the corresponding global node.
-		//but fun was incremented in edge->AssignGlobalFunctionNumbers so subtract 1:
-		SRnode* node = model.GetNode(edge->GetMidNodeId());
-		node->PutGlobalFunctionNumber(fun - 1);
-	}
-	for (i = 0; i < model.GetNumEdges(); i++)
-	{
-		edge = model.GetEdge(i);
-		edge->AssignGlobalFunctionNumbers(fun, 3, 8);
-	}
-
-	//faces:
-	int nf = model.GetNumFaces();
-	int nn, ne;
-	for (i = 0; i < nf; i++)
-	{
-		lfun = 0;
-		face = model.GetFace(i);
-		//corner functions:
-		nn = face->GetNumNodes();
-		for (j = 0; j < nn; j++)
-		{
-			gfun = face->GetNode(j)->GetGlobalFunctionNumber();
-			face->PutGlobalFunctionNumber(lfun, gfun);
-			lfun++;
-		}
-
-		//edge p2 functions:
-		ne = face->GetNumLocalEdges();
-		for (j = 0; j < ne; j++)
-		{
-			edge = face->GetEdge(j);
-			gfun = edge->GetGlobalFunctionNumber(2);
-			face->PutGlobalFunctionNumber(lfun, gfun);
-			lfun++;
-		}
-
-		//edge higher functions:
-		ne = face->GetNumLocalEdges();
-		for (j = 0; j < ne; j++)
-		{
-			edge = face->GetEdge(j);
-			pej = edge->GetPorder();
-			for (k = 3; k <= pej; k++)
-			{
-				gfun = edge->GetGlobalFunctionNumber(k);
-				face->PutGlobalFunctionNumber(lfun, gfun);
-				lfun++;
-			}
-		}
-
-		n = face->GetNumGlobalFunctions();
-		for (j = lfun; j < n; j++)
-		{
-			face->PutGlobalFunctionNumber(lfun, fun);
-			lfun++;
-			fun++;
-		}
-	}
-	//elements:
-	maxNumElementFunctions = 0;
-	for (i = 0; i < model.GetNumElements(); i++)
-	{
-		lfun = 0;
-		elem = model.GetElement(i);
-		//nodes:
-		n = elem->GetNumNodes();
-		for (j = 0; j < n; j++)
-		{
-			gfun = elem->GetNode(j)->GetGlobalFunctionNumber();
-			elem->PutGlobalFunctionNumbers(lfun, gfun);
-			lfun++;
-		}
-
-		//edge p2 functions:
-		for (j = 0; j < elem->GetNumLocalEdges(); j++)
-		{
-			edge = elem->GetEdge(j);
-			gfun = edge->GetGlobalFunctionNumber(2);
-			elem->PutGlobalFunctionNumbers(lfun, gfun);
-			lfun++;
-		}
-
-		//edge higher functions:
-		for (j = 0; j < elem->GetNumLocalEdges(); j++)
-		{
-			edge = elem->GetEdge(j);
-			pej = edge->GetPorder();
-			for (k = 3; k <= pej; k++)
-			{
-				gfun = edge->GetGlobalFunctionNumber(k);
-				elem->PutGlobalFunctionNumbers(lfun, gfun);
-				lfun++;
-			}
-		}
-
-		//face functions:
-		for (j = 0; j < elem->GetNumLocalFaces(); j++)
-		{
-			face = elem->GetFace(j);
-			n = model.basis.CountFaceTotalFunctions(face, nint);
-			//skip number of edge and node functions on face:
-			for (k = (n - nint); k < n; k++)
-			{
-				gfun = face->GetGlobalFunctionNumber(k);
-				elem->PutGlobalFunctionNumbers(lfun, gfun);
-				lfun++;
-			}
-		}
-
-		//internal functions:
-		n = model.basis.CountElementFunctions(elem, nint);
-		if (n > maxNumElementFunctions)
-			maxNumElementFunctions = n;
-		for (j = 0; j < nint; j++)
-		{
-			elem->PutGlobalFunctionNumbers(lfun, fun);
-			lfun++;
-			fun++;
-		}
-	}
-
-	numFunctions = fun;
-	model.setmaxNumElementFunctions(maxNumElementFunctions);
-
-}
 
 void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 {
 	//calculate elemental stiffness matrix for all elements in model
 	//all elements must fit in memory
 
-	SRfile elf;
-	if (echoElements)
-	{
-		SRstring line;
-		line = outdir;
-		line += slashStr;
-		line += "elemStiff.txt";
-		elf.filename = line;
-		elf.Open(SRoutputMode);
-		elf.PrintLine("Element Stiffnesses");
-	}
-
+	double* enfdForceVec = NULL;
+	if(anyLcsEnfd)
+		enfdForceVec = model.getEnforcedVec();
 
 	//scratch space needed by elements:
 	model.allocateElementData();
@@ -809,8 +629,6 @@ void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 	int progout = 10;
 	for (int i = 0; i < n; i++)
 	{
-		if (echoElements)
-			elf.PrintLine("element %d", i);
 		if (i > progTarget)
 		{
 			progTarget += dprogTarget;
@@ -818,21 +636,14 @@ void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 		}
 
 		SRelement* elem = model.GetElement(i);
-		int len;
-		double *stiff = elem->CalculateStiffnessMatrix(len);
-		if (stiff == NULL)
+		double* elStiff = CalculateStiffnessMatrix(i, true, enfdForceVec);
+
+		if (elStiff == NULL)
 		{
 			LOGPRINT("Not enough memory for Element Stiffness matrices\nMemory required: %lg\n", MaxElementMem);
 			ERROREXIT;
 		}
-		if (echoElements)
-		{
-			for (int s = 0; s < len; s++)
-				elf.PrintLine("%lg",stiff[s]);
-		}
 	}
-	if (echoElements)
-		elf.Close();
 
 	LOGPRINT("\n");
 
@@ -846,7 +657,6 @@ void SRanalysis::CalculateElementStiffnesses(bool anyLcsEnfd)
 
 	if (anyLcsEnfd)
 	{
-		double *enfdForceVec = model.getEnforcedVec();
 		for (int j = 0; j < numEquations; j++)
 			solution.PlusAssign(j, enfdForceVec[j]);
 	}
@@ -873,46 +683,11 @@ void SRanalysis::CreateModel()
 	}
 }
 
-void SRanalysis::AllocateDofVectors()
-{
-	//allocate space for degree-of-freedom vectors for
-	//function equation numbers and enforced displacements
-
-	model.AllocateDofVectors(numFunctions);
-}
-
 void SRanalysis::AllocateSmoothFunctionEquations(int n)
 {
 	model.AllocateSmoothFunctionEquations(n);
 };
 
-void SRanalysis::NumberEquations()
-{
-	//global equation numbering
-	//note:
-		//fills class variable functionEquations
-		//ProcessConstraints has to be called 1st. 
-		//it assigns a negative number to global dofs that are constrained
-		//this routine will only assign an equation number to unconstrained
-		//global dofs
-
-	int eq = 0;
-	for (int gfun = 0; gfun < numFunctions; gfun++)
-	{
-		for (int dof = 0; dof < 3; dof++)
-		{
-			//unconstrained dofs have temporarily been assigned to 0.
-			//constrained dofs are assigned a negative number
-			int eqt = model.GetFunctionEquation(gfun, dof);
-			if (eqt == 0)
-			{
-				model.PutFunctionEquation(gfun, dof, eq);
-				eq++;
-			}
-		}
-	}
-	numEquations = eq;
-}
 
 void SRanalysis::SetStressMax(SRelement* elem, SRvec3& pos, double svm)
 {
@@ -983,7 +758,8 @@ void SRanalysis::NumberEquationsSmooth()
 		//(determined by post.elSmooth flag)
 	int i, e, gfun;
 	SRelement* elem;
-	for(i = 0; i < numFunctions; i++)
+	int nfun = GetNumFunctions();
+	for(i = 0; i < nfun; i++)
 		skipFun.Put(i, 1);
 	for (e = 0; e <model.GetNumElements(); e++)
 	{
@@ -999,7 +775,7 @@ void SRanalysis::NumberEquationsSmooth()
 	}
 
 	int eq = 0;
-	for(i = 0; i < numFunctions; i++)
+	for(i = 0; i < nfun; i++)
 	{
 		if(skipFun.Get(i) == 0)
 		{
@@ -1027,7 +803,7 @@ void SRanalysis::ProcessConstraints()
 	SRconstraint* con;
 	SRnode* node;
 
-	model.AllocateDofVectors(numFunctions);
+	model.AllocateDofVectors();
 
 	for (i = 0; i < model.GetNumConstraints(); i++)
 	{
@@ -1068,7 +844,7 @@ void SRanalysis::ProcessConstraints()
 			int gfun = elem->GetFunctionNumber(f);
 			for (dof = 0; dof < 3; dof++)
 			{
-				if (model.GetFunctionEquation(gfun, dof) < 0)
+				if (GetFunctionEquation(gfun, dof) < 0)
 				{
 					elem->SetConstrained();
 					break;
@@ -1099,78 +875,8 @@ void SRanalysis::ProcessConstraints()
 	}
 }
 
-bool SRanalysis::PreProcessPenaltyConstraints()
-{
-	//see if any penalty constraints are needed; if so, calibrate the penalty constant
 
-	bool anyLcsEnfd = false;
-
-	SRconstraint* con;
-	//fill faceLcsCoonstraints for elements with non-gcs constraints on boundary faces:
-	for (int i = 0; i < model.GetNumConstraints(); i++)
-	{
-		con = model.GetConstraint(i);
-		if (con->GetType() != faceCon)
-			continue;
-		if (!con->isGcs())
-		{
-			int f = con->GetEntityId();
-			SRface* face = model.GetFace(f);
-			if (!face->IsBoundaryFace() )
-				ERROREXIT; //not boundary face, non-gcs not supported
-			int eId = face->GetElementOwner(0);
-			SRelement *elem = model.GetElement(eId);
-			int lface = face->GetElementLocalFace(0);
-			elem->CalibratePenalty();
-			elem->AddfaceLCSConstraint(lface);
-			if (con->hasEnforcedDisp())
-				anyLcsEnfd = true;
-
-		}
-	}
-
-	//fill nodeLcsCoonstraints for elements with non-gcs constraints on nodes:
-	for (int i = 0; i < model.GetNumConstraints(); i++)
-	{
-		con = model.GetConstraint(i);
-		if (con->GetType() != nodalCon)
-			continue;
-		if (!con->isGcs())
-		{
-			int n = con->GetEntityId();
-			bool found = false;
-			for (int f = 0; f < model.GetNumFaces(); f++)
-			{
-				SRface* face = model.GetFace(f);
-				if (!face->IsBoundaryFace())
-					continue;
-				int eid = face->GetElementOwner(0);
-				SRelement* elem = model.GetElement(eid);
-				//find local node corresponding to node:
-				for (int l = 0; l < elem->GetNumNodesTotal(); l++)
-				{
-					if (elem->getNodeOrMidNodeId(l) == n)
-					{
-						elem->AddNodeLcSConstraints(l);
-						elem->CalibratePenalty();
-						found = true;
-						break;
-					}
-				}
-				if (found)
-					break;
-			}
-			if (!found)
-				ERROREXIT;//lcs constraint not on boundary- not supported
-			if (con->hasEnforcedDisp())
-				anyLcsEnfd = true;
-		}
-	}
-
-	return anyLcsEnfd;
-}
-
-void SRanalysis::EnforcedDisplacementAssemble(bool doingPrevSolution)
+void SRanalysis::EnforcedDisplacementAssemble()
 {
 	//assemble contribution of Enforced Displacements to global force vector
 	//notes:
@@ -1198,13 +904,7 @@ void SRanalysis::EnforcedDisplacementAssemble(bool doingPrevSolution)
 					double enfdisp = model.GetEnforcedDisplacement(colgfun, coldof);
 					if (!stiffhasbeenread)
 					{
-						if (doingPrevSolution)
-						{
-							int len;
-							elstiff = elem->CalculateStiffnessMatrix(len);
-						}
-						else
-							elstiff = ReadElementStiffness(elem);
+						elstiff = ReadElementStiffness(elem);
 						stiffhasbeenread = true;
 					}
 					//this column of element stiffness contributes to the global force vector:
@@ -1330,7 +1030,7 @@ void SRanalysis::ProcessVolumeForces(SRvec3& ResF)
 
 	SRelement* elem;
 	SRdoubleVector basvec;
-	basvec.Allocate(maxNumElementFunctions);
+	basvec.Allocate(model.GetmaxNumElementFunctions());
 	double* globalForce;
 	globalForce = GetSolutionVector();
 	SRvolumeForce* vf;
@@ -1489,77 +1189,6 @@ double* SRanalysis::ReadElementStiffness(SRelement* elem)
 	return stiff;
 }
 
-void SRanalysis::checkElementMapping()
-{
-
-	//check mapping of all elements at all gauss points needed this p-pass.
-	//straighten edges and mark associated elements as sacrificial if mapping is bad.
-
-	int nel = model.GetNumElements();
-	bool anyFail = false;
-	int e;
-	for (e = 0; e < nel; e++)
-	{
-		SRelement* elem = model.GetElement(e);
-		elem->FillMappingNodes();
-		if (!elem->testMapping())
-			anyFail = true;
-	}
-
-	if (!anyFail)
-		return;
-
-	for (e = 0; e < nel; e++)
-	{
-		SRelement* elem = model.GetElement(e);
-		elem->checkForStraightenedEdges();
-	}
-
-	for (e = 0; e < nel; e++)
-	{
-		SRelement* elem = model.GetElement(e);
-		if (!elem->isFlattened())
-			continue;
-		elem->FillMappingNodes();
-		if (!elem->testMapping())
-		{
-			//LOGPRINT("checkElementMapping elem failed: %d", elem->userId);
-			anyFail = true;
-		}
-	}
-	//flattening of an element may have invalidated an adjacent element
-	if (!anyFail)
-		return;
-
-	//flattening of an element may have invalidated an adjacent element
-	for (e = 0; e < nel; e++)
-	{
-		SRelement* elem = model.GetElement(e);
-		if (!elem->isFlattened())
-			continue;
-		elem->FillMappingNodes();
-		if (!elem->testMapping())
-			anyFail = true;
-	}
-	if (anyFail)
-	{
-		model.setPartialFlatten(false);
-		for (e = 0; e < nel; e++)
-		{
-			SRelement* elem = model.GetElement(e);
-			if (!elem->isFlattened())
-				continue;
-			elem->FillMappingNodes();
-			if (!elem->testMapping())
-				anyFail = true;
-		}
-		for (e = 0; e < nel; e++)
-		{
-			SRelement* elem = model.GetElement(e);
-			elem->checkForStraightenedEdges();
-		}
-	}
-}
 
 bool SRanalysis::checkFlattenedElementHighStress()
 {
@@ -1786,21 +1415,17 @@ double SRanalysis::CalculateMaxErrorForOutput()
 		return 0.0;
 }
 
-void SRanalysis::setErrorMax(double error, int eluid, double errorSmoothRaw, double errorFaceJumps)
+void SRanalysis::setErrorMax(double error, int eluid)
 {
 	//set the maximum error in model
 	//input:
 		//error = error value in an element
 		// eluid = element userid
-		//errorSmoothRaw = smooth vs raw error value in the element
-		//errorFaceJumps = face traction jump error value in the element
 	//note:
 		//if error is greater than current max, sets class variables errorMax, errorSmoothRawAtMax, errorFaceJumpAtMax, and elUidAtMaxError
 	if (error > errorMax)
 	{
 		errorMax = error;
-		errorSmoothRawAtMax = errorSmoothRaw;
-		errorFaceJumpAtMax = errorFaceJumps;
 		elUidAtMaxError = eluid;
 	};
 }
@@ -1838,4 +1463,10 @@ void SRanalysis::zeroStressMax()
 	minsp2 = BIG;
 	maxCustom = 0.0;
 };
+
+int SRanalysis::GetNumFunctions()
+{
+	return model.GetNumFunctions();
+}
+
 

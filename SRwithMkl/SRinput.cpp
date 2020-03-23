@@ -36,6 +36,7 @@ with an equivalent open-source solver
 #include "SRanalysis.h"
 #include "SRmachDep.h"
 #include "SRinput.h"
+#include "globalWrappers.h"
 
 extern SRanalysis analysis;
 extern SRmodel model;
@@ -87,6 +88,9 @@ void SRinput::ReadModel()
 	nmat = ncoord = 0;
 	numFaceFromNodalLoad = 0;
 	anyFaceHasMultipleLoads = false;
+	int numbricks = 0;
+	int numwedges = 0;
+	int numtets = 0;
 
 	//create default GCS coordinate system (needed for lcs constraints)
 	SRcoord* coord = model.addCoord();
@@ -108,7 +112,7 @@ void SRinput::ReadModel()
 		if (line == "nodes")
 			CountEntities(nnode);
 		else if (line == "elements")
-			CountElements(nelem);
+			nelem = CountElements(numbricks, numwedges, numtets);
 		else if (line == "forces")
 			CountEntities(nforce);
 		else if (line == "facePressures")
@@ -131,6 +135,8 @@ void SRinput::ReadModel()
 			InputMaterials();
 	}
 
+	SetNumNodes(nnode);
+
 	if (nnode == 0 || nelem == 0)
 	{
 		LOGPRINT("Mesh definition incomplete. Missing nodes or elements");
@@ -148,7 +154,8 @@ void SRinput::ReadModel()
 	LOGPRINT("Number of nodes: %d", nnode);
 	LOGPRINT("\n");
 
-	model.allocateElements(nelem);
+	SetNumElements(numbricks, numwedges, numtets);
+	int neltmp = model.GetNumElements();
 
 	model.allocateVolumeForces(nvolforce);
 	//worst case of model with all bricks. Not wasteful because
@@ -195,30 +202,16 @@ void SRinput::ReadModel()
 			break;
 		}
 	}
-
-	model.allocateConstraints(ncon);
+	allocateConstraints(ncon);
 
 	int nel = model.GetNumElements();
 
 	analysis.SetEdgesToPorder(2);
 
-	//worst case for number of faces:
-	int nface;
-	if (analysis.anybricks)
-		nface = 6 * nel;
-	else if (analysis.anywedges)
-		nface = 5 * nel;
-	else
-		nface = 4 * nel;
+	createGlobalFaces();
 
-	model.allocateFaces(nface);
+	mapSetup();
 
-	nnode = model.GetNumNodes();
-
-	model.allocateNodeFaces(nnode);
-
-	model.FillGlobalFaces();
-	model.map.Setup();
 
 	while (1)
 	{
@@ -279,7 +272,6 @@ void SRinput::InputNodes()
             continue;
 		if(line == "end")
 			break;
-		node = model.addNode();
 		line.TokRead(uid);
 		if (nnode == 0)
 			nodeUidOffset = uid;
@@ -305,8 +297,8 @@ void SRinput::InputNodes()
 			zmin = z;
 		if(z > zmax)
 			zmax = z;
-		node->Create(uid, x, y, z);
-		node->setId(nnode);
+		createNode(uid, x, y, z);
+
 		if (uid > model.getMaxNodeUid())
 			model.setMaxNodeUid(uid);
 		nnode++;
@@ -316,13 +308,6 @@ void SRinput::InputNodes()
 	dy = ymax - ymin;
 	dz = zmax - zmin;
 	model.SetSize(sqrt(dx*dx + dy*dy + dz*dz));
-
-#if 0
-	LOGPRINT(" model bounding box:");
-	LOGPRINT(" xmin: %lg xmax: %lg", xmin, xmax);
-	LOGPRINT(" ymin: %lg ymax: %lg", ymin, ymax);
-	LOGPRINT(" zmin: %lg zmax: %lg", zmin, zmax);
-#endif
 
 	FillAndSortNodeUids();
 
@@ -342,10 +327,7 @@ void SRinput::InputElements()
 
 	SRstring line, tok;
 
-	SRelement* elem;
-	int nelem = 0;
 	int uid, nodeuid, mid, nodev[20], nt, id;
-	SRnode* node;
 	elemUidOffset = 0;
 	while (1)
 	{
@@ -355,8 +337,6 @@ void SRinput::InputElements()
             continue;
 		if(line == "end")
 			break;
-		elem = model.GetElement(nelem);
-		elem->setId(nelem);
 		line.TokRead(uid);
 		if (nelem == 0)
 			elemUidOffset = uid;
@@ -380,40 +360,17 @@ void SRinput::InputElements()
 				break;
 			id = NodeFind(nodeuid);
 			nodev[nt] = id;
-			node = model.GetNode(id);
-			if (node->GetFirstElementOwner() == -1)
-				node->SetFirstElementOwner(elem->GetId());
 			nt++;
 		}
 		if (nt == 4 || nt == 6 || nt == 8)
 			ERROREXIT; //linear mesh not supported
 
-		if (nt == 10)
-		{
-			elem->Create(tet, uid, nt, nodev, mat);
-			analysis.anytets = true;
-		}
-		else if (nt == 15)
-		{
-			elem->Create(wedge, uid, nt, nodev, mat);
-			analysis.anywedges = true;
-		}
-		else if (nt == 20)
-		{
-			elem->Create(brick, uid, nt, nodev, mat);
-			analysis.anybricks = true;
-		}
-		else
-		{
-			LOGPRINT("incorrect element definition in mesh file");
-			ERROREXIT;
-		}
-
-		model.CreateElemEdges(elem, nt, nodev);
-		nelem++;
+		createElementIso(uid, nt, nodev, mat->getE(), mat->getNu());
 	}
 
 	bool anyorphan = false;
+	SRnode* node;
+	SRelement* elem;
 	for (int i = 0; i < model.GetNumNodes(); i++)
 	{
 		node = model.GetNode(i);
@@ -441,7 +398,6 @@ void SRinput::InputElements()
 		}
 		SortElems();
 	}
-
 }
 
 void SRinput::InputMaterials()
@@ -886,7 +842,7 @@ void SRinput::InputFacePressures()
 				nv[i] = -1;
 		}
 		int fId = -1;
-		fId = elemFaceFind(elem, nv, gno);
+		fId = model.elemFaceFind(elem, nv, gno);
 		if (fId == -1)
 		{
 			LOGPRINT(" improperly defined pressure load on face. element user id: %d", eluid);
@@ -978,7 +934,7 @@ void SRinput::InputFaceTractions()
 
 		bool found = false;
 		int fId = -1;
-		fId = elemFaceFind(elem, nv, gno);
+		fId = model.elemFaceFind(elem, nv, gno);
 		if (fId == -1)
 		{
 			LOGPRINT(" improperly defined traction load on face. element user id: %d", eluid);
@@ -1337,12 +1293,15 @@ void SRinput::InputNodalConstraints()
 			{
 				//new constraint:
 				int conid = model.GetNumConstraints();
-				con = model.addConstraint();
-				con->setId(conid);
+				bool constrainedDof[3];
+				SRvec3 enfd;
+				for (int dof = 0; dof < 3; dof++)
+					constrainedDof[dof] = curcon->IsConstrainedDof(dof);
+				curcon->getDisp(0, enfd);
+				inputNodalConstraint(curcon->GetEntityId(), constrainedDof, enfd.d);
 				nodeConStore.d[i].cons.PushBack(conid);
-				con->Copy(*curcon);
-				SRnode* node = model.GetNode(con->GetEntityId());
-				node->SetConstraintId(con->getId());
+				SRnode* node = model.GetNode(curcon->GetEntityId());
+				node->SetConstraintId(conid);
 			}
 		}
 	}
@@ -1372,7 +1331,7 @@ void SRinput::InputFaceConstraints(int nfc)
 
 	int ncon = model.GetNumConstraints();
 	ncon += nfc;
-	model.allocateConstraints(ncon);
+	allocateConstraints(ncon);
 
 	int gno[4];
 	int i;
@@ -1419,15 +1378,11 @@ void SRinput::InputFaceConstraints(int nfc)
 			coordId = GetCoordId(tok);
 		}
 
-		int fId = elemFaceFind(elem, nv, gno);
+		int conId = model.GetNumConstraints();
+		int fId = addFaceConstraint(eid, nv, condof, coordId);
 		if (fId == -1)
 			ERROREXIT;
-		int conId = model.GetNumConstraints();
-		SRconstraint* constraint = model.addConstraint();
-		constraint->SetType(faceCon);
-		constraint->SetEntityId(fId);
 		SRface* face = model.GetFace(fId);
-		constraint->SetCoordId(coordId);
 		face->setConstraintId(conId);
 		int nnodesTotal = face->GetNumNodesTotal();
 		double enfd[8];
@@ -1439,7 +1394,6 @@ void SRinput::InputFaceConstraints(int nfc)
 			enfdZero[dof] = true;
 			if (!condof[dof])
 				continue;
-			constraint->SetConstrainedDof(dof);
 			if (!analysis.inputFile.GetLine(line))
 				ERROREXIT;
 			tok = line.Token();//skip continuation character ("#")
@@ -1490,15 +1444,12 @@ void SRinput::InputFaceConstraints(int nfc)
 		}
 		if (!allEndZero)
 		{
-			analysis.anyEnforcedDisplacement = true;
-			constraint->allocateEnforcedDisplacementData(nnodesTotal);
-			for (int dof = 0; dof < 3; dof++)
+			for (i = 0; i < nnodesTotal; i++)
 			{
-				if (!enfdZero[dof])
-				{
-					for (i = 0; i < nnodesTotal; i++)
-						constraint->PutEnforcedDisplacementData(i, dof, enfdm[i][dof]);
-				}
+				SRvec3 enfdn;
+				for (int dof = 0; dof < 3; dof++)
+					enfdn.d[dof] = enfdm[i][dof];
+				inputFaceNodeEnfd(conId, i, enfdn.d);
 			}
 		}
 	}
@@ -1612,14 +1563,8 @@ void SRinput::readSettings()
 			double tol;
 			tok = line.Token();
 			line.TokRead(tol);
-			analysis.errorChecker.SetLowStressTol(tol);
-			LOGPRINT("Low Stress Tolerance: %lg\n", analysis.errorChecker.GetLowStressTol());
-			anyCustom = true;
-		}
-		else if (line.CompareUseLength("NOCHECKREENTRANT"))
-		{
-			analysis.errorChecker.setCheckReentrant(false);
-			LOGPRINT("do not check for reentrant corners during sacrifical element detection");
+			SetLowStressTolerance(tol);
+			LOGPRINT("Low Stress Tolerance: %lg\n", tol);
 			anyCustom = true;
 		}
 		else if (line.CompareUseLength("ALLCONSTRAINTSPENALTY"))
@@ -1669,8 +1614,8 @@ void SRinput::readSettings()
 	{
 		analysis.ErrorTolerance = 0.03;
 		analysis.maxPorder = analysis.maxPorderFinalAdapt = 8;
-		analysis.errorChecker.setLowStressTolFinalAdapt(0.5);
-		analysis.errorChecker.SetLowStressTol(0.5);
+		SetLowStressToleranceFinalAdapt(0.5);
+		SetLowStressTolerance(0.5);
 	}
 }
 
@@ -1757,7 +1702,7 @@ void SRinput::doNodalToFaceConstraints()
 	//reallocate model.constraints with room for the face constraints, then add the face constraints.
 	int ncon0 = model.GetNumConstraints();
 	int nconTotal = ncon0 + nfaceCon;
-	model.allocateConstraints(nconTotal);
+	allocateConstraints(nconTotal);
 	nodalToFaceConstraints(addTheConstraintsFlag);
 
 	//fatal error if any nodes remain with more than one active constraint;

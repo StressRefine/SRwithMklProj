@@ -152,38 +152,45 @@ void SRinput::CountEntities(int &num)
 	}
 }
 
-void SRinput::CountElements(int &num)
+int SRinput::CountElements(int& numbricks, int& numwedges, int& numtets)
 {
-	//count the elements currently being read in input file by counting 
-	//lines (except blank or comment) until end is encountered
-	//note:
-		//this is the same as CountEntities but also checks for linear mesh
+		//count the elements currently being read in input file by counting 
+		//lines (except blank or comment) until end is encountered
+		//note:
+			//this is the same as CountEntities but also checks for linear mesh
 
+	int num = 0;
+	numbricks = numwedges = numtets = 0;
 	SRstring line, tok;
 	while (1)
 	{
 		if (!analysis.inputFile.GetLine(line))
 			break;
-		if (num == 0)
+		int eluid;
+		line.TokRead(eluid);
+		tok = line.Token();//skip material name field
+		int nt = 0, nuid;
+		while (1)
 		{
-			tok = line.Token();//skip uid field
-			tok = line.Token();//skip material name field
-			int nt = 0, nuid;
-			while (1)
-			{
-				if (!line.TokRead(nuid))
-					break;
-				nt++;
-			}
-			if (nt == 4 || nt == 6 || nt == 8)
-				ERROREXIT; //linear mesh not allowed
+			if (!line.TokRead(nuid))
+				break;
+			nt++;
 		}
+		if (nt == 4 || nt == 6 || nt == 8)
+			ERROREXIT; //linear mesh not allowed
+		if (nt == 10)
+			numtets++;
+		else if (nt == 15)
+			numwedges++;
+		else if (nt == 20)
+			numbricks++;
 		if (line.isCommentOrBlank(SKIPCONTINATION))
 			continue;
 		if (line == "end")
 			break;
 		num++;
 	}
+	return num;
 }
 
 int SRinput::GetMaterialId(SRstring &name)
@@ -678,25 +685,6 @@ int SRinput::nodalToFaceForces(bool countOnly)
 	}
 
 	return numFaceForce;
-}
-
-int SRinput::elemFaceFind(SRelement* elem, int nv[], int gno[])
-{
-	//find the face on an element that matches nodes in nv array
-	//input:
-		//elem = pointer to element
-		//nv = corner nodes of faces. nv[3] = -1 for tri face
-	//output:
-		//gno = global node orders of the nodes on the face corresponding to nv
-	//return
-		//id of the global faces in the model with corner nodes nv; -1 if no match
-	for (int l = 0; l < elem->GetNumLocalFaces(); l++)
-	{
-		SRface* face = elem->GetFace(l);
-		if (SRfaceUtil::FaceMatch(nv, face->getNodeIds(), gno))
-			return elem->GetLocalFaceGlobalId(l);
-	}
-	return -1;
 }
 
 void SRinput::FillAndSortNodeUids()

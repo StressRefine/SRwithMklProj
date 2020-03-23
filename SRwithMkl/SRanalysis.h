@@ -45,7 +45,6 @@ with an equivalent open-source solver
 #include "SRmath.h"
 #include "SRstring.h"
 #include "SRfile.h"
-#include "SRerrorCheck.h"
 #include "SRinput.h"
 #include "SRsolver.h"
 #include "SRpostProcess.h"
@@ -84,10 +83,8 @@ public:
 	void Initialize();
 	void CleanUp(bool partial = false);
 	void AllocateSmoothFunctionEquations(int n);
-	void AllocateDofVectors();
 	void NumberEquationsSmooth();
 	bool AdaptUniform(int pIteration, bool checkErrorOnly);
-	double GetEnforcedDisplacementCoeff(int gfun, int dof);
 	double GetDisplacementCoeff(int gfun, int dof);
 	double GetDisplacementCoeff(int eq) { return solution.Get(eq); };
 	void NumberEquations();
@@ -95,12 +92,10 @@ public:
 	void PStats();
 	void CreateModel();
 	void CalculateElementStiffnesses(bool anyLcsEnfd);
-	void NumberGlobalFunctions();
 	bool Adapt(int pIteration, bool checkErrorOnly = false);
 	void Run();
-	bool PreProcessPenaltyConstraints();
 	void ProcessConstraints();
-	void EnforcedDisplacementAssemble(bool doingPrevSolution = false);
+	void EnforcedDisplacementAssemble();
 	void ProcessForces();
 	void ProcessVolumeForces(SRvec3& ResF);
 	void ProcessElemVolumeForce(SRvolumeForce* vf, SRelement*elem, SRvec3& ResF, SRdoubleVector& basvec, double* globalForce);
@@ -120,8 +115,7 @@ public:
 
 	double GetStressMax(){ return stressMax; };
 	double GetStressMaxComp(int i){ return stressMaxComp[i]; };
-	int GetNumFunctions(){ return numFunctions; }
-	int GetNumEquations(){ return numEquations; }
+	int GetNumFunctions();
 	int GetNumSmoothEquations(){ return numSmoothEquations; }
 	bool IsAnyEnforcedDisplacement(){ return anyEnforcedDisplacement; };
 	void SetMaxPorderLowStress(int p){ maxPorderLowStress = p; };
@@ -144,8 +138,6 @@ public:
 	void PrintStresses(double *stress);
 	void SetDetectSacr(bool sacr){ detectSacrificialElements = sacr; };
 	void setAdaptLoopMax(int nits);
-	void testMapping();
-	void checkElementMapping();
 	bool checkFlattenedElementHighStress();
 	void CheckElementsFitInMemory();
 	void SetEdgesToPorder(int p);
@@ -163,7 +155,7 @@ public:
 	void setMaxPJump(int j){ maxPJump = j; };
 	double GetErrorTolerance(){ return ErrorTolerance; };
 	void setErrorTolerance(double tol){ ErrorTolerance = tol; };
-	void setErrorMax(double error, int eluid, double errorSmoothRaw, double errorFaceJumps);
+	void setErrorMax(double error, int eluid);
 	bool getAllMatsEquivElast(){ return allMatsEquivElast; };
 	void setAllMatsEquivElast(bool tf){ allMatsEquivElast = tf; };
 	double getstressUnitConversion(){ return stressUnitConversion; };
@@ -174,13 +166,13 @@ public:
 	bool getallMatsHaveAllowable(){ return allMatsHaveAllowable; };
 	bool getanyMatYielded(){ return anyMatYielded; };
 	void setanyMatYielded(bool tf){ anyMatYielded = tf; };
-
+	int getNumSacrEelem() { return numSacrElem; };
+	int GetNumEquations() { return numEquations; };
 
 	//1 instance of each utility class:
 	SRsolver solver;
 	SRpostProcess post;
 	SRinput input;
-	SRerrorCheck errorChecker;
 
 	SRstring outdir;
 	SRfile inputFile;
@@ -194,9 +186,6 @@ public:
 
 private:
 	bool anyEnforcedDisplacement;
-	int numFunctions;
-	int maxNumElementFunctions;
-	int numEquations;
 	int numSmoothEquations;
 	int numprocessors;
 	bool detectSacrificialElements;
@@ -217,8 +206,6 @@ private:
 	bool useUnits;
 	bool allMatsHaveAllowable;
 	double errorMax;
-	double errorSmoothRawAtMax;
-	double errorFaceJumpAtMax;
 
 	SRdoubleVector solution;
 	SRintVector skipFun;
@@ -238,6 +225,7 @@ private:
 	bool doEnergySmooth;
 	bool pOrderUniform;
 	int maxPinModel;
+	int numSacrElem;
 
 	double maxAllowableAnyActiveMat;
 	int numFlattenedElHighStress;
@@ -258,5 +246,6 @@ private:
 	int maxPorderLowStress;
 	double ErrorTolerance;
 	bool echoElements;
+	int numEquations;
 };
 

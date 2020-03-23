@@ -36,6 +36,7 @@ with an equivalent open-source solver
 #include "SRmodel.h"
 #include "SRanalysis.h"
 #include "SRelement.h"
+#include "globalWrappers.h"
 
 #ifdef _DEBUG
 #undef THIS_FILE
@@ -160,14 +161,13 @@ void SRpostProcess::PostProcessElementStresses()
 	}
 
 	int nel = model.GetNumElements();
-	bool doMaxClipping = (nel - analysis.errorChecker.GetnumSacrificialElements() > 0);
+	bool doMaxClipping = (nel - analysis.getNumSacrEelem() > 0);
 	for (e = 0; e < nel; e++)
 	{
 		elem = model.GetElement(e);
 		if (elem->isSacrificial())
 			fillSacricialElementNodalStress(elem, doMaxClipping);
 	}
-
 	nodalStressCount.Free();
 }
 
@@ -189,6 +189,7 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 	int i, nn, ne;
 	double r, s, t;
 	double stress[6];
+	int elid = elem->GetId();
 
 	nn = elem->GetNumNodes();
 	ne = elem->GetNumLocalEdges();
@@ -209,7 +210,7 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 		id = elem->GetNodeId(i);
 		node = model.GetNode(id);
 		elem->NodeNaturalCoords(i, r, s, t);
-		elem->GetStress(r, s, t, stress);
+		calculateSmoothedStress(elid, r, s, t, stress);
 		if (!elem->isSacrificial())
 		{
 			svm = StressMaxCheck(elem, node->Position(), stress);
@@ -237,7 +238,7 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 		id = edge->GetMidNodeId();
 		node = model.GetNode(id);
 		elem->NodeNaturalCoords(i + nn, r, s, t);
-		elem->GetStress(r, s, t, stress);
+		calculateSmoothedStress(elid, r, s, t, stress);
 		if (!elem->isSacrificial())
 		{
 			svm = StressMaxCheck(elem, node->Position(), stress);
@@ -268,7 +269,7 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 		SRface* face = elem->GetFace(i);
 		model.map.FaceCentroid(face, rf, sf);
 		model.map.ElementNaturalCoordsFromFace(elem, i, rf, sf, r, s, t);
-		elem->GetStress(r, s, t, stress);
+		calculateSmoothedStress(elid, r, s, t, stress);
 		if (!elem->isSacrificial())
 		{
 			face->Position(rf, sf, pos);
@@ -284,7 +285,7 @@ void SRpostProcess::CalculateElementStresses(SRelement* elem, bool checkMaxOnly)
 		}
 	}
 	model.map.ElementCentroid(elem, r, s, t);
-	elem->GetStress(r, s, t, stress);
+	calculateSmoothedStress(elid, r, s, t, stress);
 	if (!elem->isSacrificial())
 	{
 		elem->Position(r, s, t, pos);
@@ -329,6 +330,7 @@ void SRpostProcess::fillSacricialElementNodalStress(SRelement* elem, bool doMaxC
 	ne = elem->GetNumLocalEdges();
 	SRedge* edge;
 	int id;
+	int elid = elem->GetId();
 	elem->SetBasisData();
 	SRmaterial* elmat = elem->GetMaterial();
 	double maxSvm = elmat->GetMaxSvm();
@@ -345,7 +347,7 @@ void SRpostProcess::fillSacricialElementNodalStress(SRelement* elem, bool doMaxC
 		if (doMaxClipping && nodalStressCount.Get(id) != 0)
 			continue;
 		elem->NodeNaturalCoords(i, r, s, t);
-		elem->GetStress(r, s, t, stress);
+		calculateSmoothedStress(elid, r, s, t, stress);
 		double vm = model.math.GetSvm(stress);
 		double ratvm = 1.0;
 		for (int j = 0; j < 6; j++)
@@ -379,7 +381,7 @@ void SRpostProcess::fillSacricialElementNodalStress(SRelement* elem, bool doMaxC
 			continue;
 
 		elem->NodeNaturalCoords(i + nn, r, s, t);
-		elem->GetStress(r, s, t, stress);
+		calculateSmoothedStress(elid, r, s, t, stress);
 		double vm = model.math.GetSvm(stress);
 		double ratvm = 1.0;
 		for (int j = 0; j < 6; j++)
